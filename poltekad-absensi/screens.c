@@ -27,14 +27,15 @@ void create_screen_home_page() {
     objects.home_page = obj;
     lv_obj_set_pos(obj, 0, 0);
     lv_obj_set_size(obj, 480, 320);
+    lv_obj_add_event_cb(obj, action_change_screen, LV_EVENT_PRESSED, (void *)0);
     {
         lv_obj_t *parent_obj = obj;
         {
             // button1
             lv_obj_t *obj = lv_button_create(parent_obj);
             objects.button1 = obj;
-            lv_obj_set_pos(obj, 190, 135);
-            lv_obj_set_size(obj, 100, 50);
+            lv_obj_set_pos(obj, 215, 135);
+            lv_obj_set_size(obj, 50, 50);
             lv_obj_add_event_cb(obj, action_bt_push, LV_EVENT_CLICKED, (void *)0);
             {
                 lv_obj_t *parent_obj = obj;
@@ -43,7 +44,7 @@ void create_screen_home_page() {
                     lv_obj_set_pos(obj, 0, 0);
                     lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
                     lv_obj_set_style_align(obj, LV_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_label_set_text(obj, "Button");
+                    lv_label_set_text(obj, "BT");
                 }
             }
         }

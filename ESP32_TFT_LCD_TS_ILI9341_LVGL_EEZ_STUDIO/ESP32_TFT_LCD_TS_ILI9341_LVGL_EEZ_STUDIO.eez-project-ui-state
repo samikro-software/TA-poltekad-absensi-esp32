@@ -1,6 +1,7 @@
 {
   "navigation": {
     "selectedUserPageObject": "[ESP32_TFT_LCD_TS_ILI9341_LVGL_EEZ_STUDIO.eez-project]:/userPages/0",
+    "selectedActionObject": "[ESP32_TFT_LCD_TS_ILI9341_LVGL_EEZ_STUDIO.eez-project]:/actions/1",
     "subnavigationSelectedItems": {
       "variables-tab/sub-navigation/selected-item": "Global"
     }
@@ -124,6 +125,7 @@
                   "type": "tabset",
                   "id": "#4b11f47e-9ae8-4c88-aa85-30245d16dc95",
                   "weight": 1,
+                  "selected": 2,
                   "enableClose": false,
                   "children": [
                     {
@@ -464,7 +466,7 @@
                 {
                   "type": "tab",
                   "id": "#d5108812-f9cb-434b-8572-bc938741581e",
-                  "name": "Main",
+                  "name": "home_page",
                   "component": "editor",
                   "config": {
                     "objectPath": "[ESP32_TFT_LCD_TS_ILI9341_LVGL_EEZ_STUDIO.eez-project]:/userPages/0",
@@ -1133,7 +1135,7 @@
   "searchMatchWholeWord": false,
   "replaceEnabled": false,
   "replaceText": "",
-  "pageRuntimeFrontFace": true,
+  "pageRuntimeFrontFace": false,
   "breakpoints": {},
   "watchExpressions": [],
   "showComponentDescriptions": true,
@@ -1141,7 +1143,9 @@
   "selectedStylePropertyName": "",
   "lvglPart": "MAIN",
   "lvglState": "DEFAULT",
-  "lvglExpandedPropertiesGroup": [],
+  "lvglExpandedPropertiesGroup": [
+    "POSITION AND SIZE"
+  ],
   "showInactiveFlowsInDebugger": true,
   "globalFlowZoom": true,
   "flowZoom": 1,

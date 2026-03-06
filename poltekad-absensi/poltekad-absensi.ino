@@ -3,10 +3,16 @@
 
 #include <lvgl.h>
 #include "ui.h"
+#include "actions.h"
 #include <TFT_eSPI.h>
+#include "rtc-ds3231.h"
+RtcDs3231 rtc;
 
-extern "C"  void action_change_screen() {
-    // Serial.println("Tombol di layar EEZ Studio telah ditekan!");
+#include "rfid.h"
+Rfid rf;
+
+void action_change_screen(lv_event_t * e) {
+    Serial.println("layar EEZ Studio telah ditekan!");
     
     // Contoh: Menyalakan LED fisik di ESP32
     // static bool status = false;
@@ -14,7 +20,7 @@ extern "C"  void action_change_screen() {
     // digitalWrite(2, status ? HIGH : LOW);
 }
 
-extern "C"  void action_bt_push(lv_event_t * e) {
+void action_bt_push(lv_event_t * e) {
     Serial.println("Tombol di layar EEZ Studio telah ditekan!");
     // PENTING: Cek apakah event-nya benar-benar "CLICKED"
     lv_event_code_t code = lv_event_get_code(e);
@@ -73,9 +79,12 @@ void my_disp_flush( lv_display_t *disp, const lv_area_t *area, uint8_t * px_map)
     uint32_t w = lv_area_get_width(area);
     uint32_t h = lv_area_get_height(area);
 
+    tft.dmaWait();
     tft.startWrite();
     tft.setAddrWindow(area->x1, area->y1, w, h);
     tft.pushColors((uint16_t *)px_map, w * h, true);
+    // tft.pushPixelsDMA((uint16_t *)px_map, w * h);
+    // tft.pushImageDMA(area->x1, area->y1, w, h, (uint16_t *)px_map);
     tft.endWrite();
 
     /*Call it to tell LVGL you are ready*/
@@ -85,34 +94,20 @@ void my_disp_flush( lv_display_t *disp, const lv_area_t *area, uint8_t * px_map)
 /*Read the touchpad*/
 void my_touchpad_read( lv_indev_t * indev, lv_indev_data_t * data )
 {
-    /*For example  ("my_..." functions needs to be implemented by you)
-    int32_t x, y;
-    bool touched = my_get_touch( &x, &y );
+    /*For example  ("my_..." functions needs to be implemented by you)*/
+    // uint16_t x, y;
+    // bool touched = tft.getTouch( &x, &y );
 
-    if(!touched) {
-        data->state = LV_INDEV_STATE_RELEASED;
-    } else {
-        data->state = LV_INDEV_STATE_PRESSED;
+    // if(!touched) {
+    //     data->state = LV_INDEV_STATE_RELEASED;
+    // } else {
+    //     data->state = LV_INDEV_STATE_PRESSED;
 
-        data->point.x = x;
-        data->point.y = y;
-    }
-     */
+    //     data->point.x = y;
+    //     data->point.y = x;
 
-  uint16_t touchX, touchY;
-  bool touched = tft.getTouch(&touchX, &touchY);
-
-  if (!touched) {
-      data->state = LV_INDEV_STATE_REL;
-  } else {
-      data->state = LV_INDEV_STATE_PR;
-      /* Atur koordinat */
-      data->point.x = touchX;
-      data->point.y = touchY;
-      
-      // Debug: Munculkan koordinat di Serial Monitor
-      Serial.printf("Touch at: %d,%d\n", touchX, touchY);
-  }
+    //     Serial.printf("Touch at: %d,%d\n", x, y);
+    // }
 }
 
 /*use Arduinos millis() as tick source*/
@@ -125,6 +120,9 @@ unsigned long timeout;
 bool pg2 = false;
 unsigned char modal = 0;
 
+TaskHandle_t Task1;
+TaskHandle_t Task2;
+
 void setup()
 {
     String LVGL_Arduino = "Hello Arduino! ";
@@ -132,11 +130,13 @@ void setup()
 
     Serial.begin( 115200 );
     Serial.println( LVGL_Arduino );
-    uint16_t calibrationData[] = {345, 3424, 718, 2656, 1};
+
+    // uint16_t calibrationData[] = { 265, 3556, 365, 3415, 3 }; //{345, 3424, 718, 2656, 1};  // { 265, 3556, 365, 3415, 3 };
 
     tft.begin();
     tft.setRotation(3); // Landscape
-    tft.setTouch(calibrationData);
+    // tft.initDMA(); // WAJIB AKTIF UNTUK DMA
+    // tft.setTouch(calibrationData);
 
     lv_init();
 
@@ -148,15 +148,22 @@ void setup()
     lv_log_register_print_cb( my_print );
 #endif
 
-    lv_display_t * disp;
-
     // /*TFT_eSPI can be enabled lv_conf.h to initialize the display in a simple way*/
-    disp = lv_tft_espi_create(TFT_HOR_RES, TFT_VER_RES, draw_buf, sizeof(draw_buf));
+    lv_display_t * disp = lv_tft_espi_create(TFT_HOR_RES, TFT_VER_RES, draw_buf, sizeof(draw_buf));
 
     // 3. Setup Display
     // lv_display_t * disp = lv_display_create(TFT_HOR_RES, TFT_VER_RES);
     // lv_display_set_flush_cb(disp, my_disp_flush);
     // lv_display_set_buffers(disp, draw_buf, NULL, sizeof(draw_buf), LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+    // // Alokasi memori di Internal RAM untuk kecepatan maksimal DMA
+    // buf1 = (uint16_t *)heap_caps_malloc(BUF_SIZE * sizeof(uint16_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    // buf2 = (uint16_t *)heap_caps_malloc(BUF_SIZE * sizeof(uint16_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+
+    // // Setup Display di LVGL 9
+    // lv_display_t * disp = lv_display_create(TFT_HOR_RES, TFT_VER_RES);
+    // lv_display_set_buffers(disp, buf1, buf2, BUF_SIZE * sizeof(uint16_t), LV_DISPLAY_RENDER_MODE_PARTIAL);
+    // lv_display_set_flush_cb(disp, my_disp_flush);
 
     lv_display_set_rotation(disp, TFT_ROTATION);
 
@@ -191,31 +198,85 @@ void setup()
     ui_init();
     Serial.println( "Setup done" );
 
+    rtc.init();
+    rf.init();
     timeout = millis();
+
+    //create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
+    xTaskCreatePinnedToCore(
+        Task1code,   /* Task function. */
+        "Task1",     /* name of task. */
+        10000,       /* Stack size of task */
+        NULL,        /* parameter of the task */
+        1,           /* priority of the task */
+        &Task1,      /* Task handle to keep track of created task */
+        0          /* pin task to core 0 */
+    );
+
+    xTaskCreatePinnedToCore(
+        Task2code,   /* Task function. */
+        "Task2",     /* name of task. */
+        10000,       /* Stack size of task */
+        NULL,        /* parameter of the task */
+        1,           /* priority of the task */
+        &Task2,      /* Task handle to keep track of created task */
+        1          /* pin task to core 0 */
+    );
 }
 
 void loop()
 {
-    lv_timer_handler(); /* let the GUI do its work */
-    ui_tick(); // Penting untuk EEZ Flow
-    // delay(1); /* let this time pass */
+    // lv_timer_handler(); /* let the GUI do its work */
+    // ui_tick(); // Penting untuk EEZ Flow
+    // delay(10); /* let this time pass */
+}
 
-    // if((millis() - timeout) > 5000){
-    //   timeout = millis();
+//Task1code: blinks an LED every 1000 ms
+void Task1code( void * pvParameters ){
+    Serial.print("Task1 running on core ");
+    Serial.println(xPortGetCoreID());
 
-    //   switch(modal){
-    //     case 0 : lv_screen_load(objects.second_page); break;
-    //     case 1 : lv_obj_remove_flag(objects.panel2, LV_OBJ_FLAG_HIDDEN); break;
-    //     case 2 : lv_obj_remove_flag(objects.panel3, LV_OBJ_FLAG_HIDDEN); break;
-    //     case 3 : lv_obj_remove_flag(objects.label3, LV_OBJ_FLAG_HIDDEN); break;
-    //     default : 
-    //       lv_obj_add_flag(objects.panel2, LV_OBJ_FLAG_HIDDEN); 
-    //       lv_obj_add_flag(objects.panel3, LV_OBJ_FLAG_HIDDEN); 
-    //       lv_obj_add_flag(objects.label3, LV_OBJ_FLAG_HIDDEN); 
-    //       lv_screen_load(objects.home_page);
-    //     break;
-    //   }
-    //   modal ++;
-    //   if(modal > 4) modal = 0;
-    // }
+    for(;;){
+      lv_timer_handler(); /* let the GUI do its work */
+      ui_tick(); // Penting untuk EEZ Flow
+
+      if((millis() - timeout) > 5000){
+        timeout = millis();
+
+        switch(modal){
+          case 0 : lv_screen_load_anim(objects.second_page, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false); break;
+          case 1 : lv_obj_remove_flag(objects.panel2, LV_OBJ_FLAG_HIDDEN); break;
+          case 2 : lv_obj_remove_flag(objects.panel3, LV_OBJ_FLAG_HIDDEN); break;
+          case 3 : lv_obj_remove_flag(objects.label3, LV_OBJ_FLAG_HIDDEN); break;
+          default : 
+            lv_obj_add_flag(objects.panel2, LV_OBJ_FLAG_HIDDEN); 
+            lv_obj_add_flag(objects.panel3, LV_OBJ_FLAG_HIDDEN); 
+            lv_obj_add_flag(objects.label3, LV_OBJ_FLAG_HIDDEN); 
+            lv_screen_load(objects.home_page);
+          break;
+        }
+        modal ++;
+        if(modal > 4) modal = 0;
+      }
+
+      byte card_uuid[10];
+      unsigned char card_length = rf.loop(card_uuid);
+      if(card_length){
+        Serial.printf("%02X %02X %02X\r\n", card_uuid[0], card_uuid[1], card_uuid[2]);
+      }
+      vTaskDelay(5);
+    }
+}
+
+//Task2code: blinks an LED every 1000 ms
+void Task2code( void * pvParameters ){
+    Serial.print("Task2 running on core ");
+    Serial.println(xPortGetCoreID());
+
+    for(;;){
+      DATETIME_TypeDef dt = rtc.getTime();
+      // Serial.printf("%02d:%02d:%02d\r\n", dt.time.hour, dt.time.minute, dt.time.second);
+
+      vTaskDelay(1000);
+    }
 }

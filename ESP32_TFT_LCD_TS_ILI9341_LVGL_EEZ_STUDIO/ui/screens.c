@@ -27,6 +27,7 @@ void create_screen_home_page() {
     objects.home_page = obj;
     lv_obj_set_pos(obj, 0, 0);
     lv_obj_set_size(obj, 480, 320);
+    lv_obj_add_event_cb(obj, action_change_screen, LV_EVENT_PRESSED, (void *)0);
     {
         lv_obj_t *parent_obj = obj;
         {
