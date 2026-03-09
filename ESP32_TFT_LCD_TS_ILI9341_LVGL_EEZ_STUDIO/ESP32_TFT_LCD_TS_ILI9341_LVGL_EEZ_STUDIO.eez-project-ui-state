@@ -1,7 +1,8 @@
 {
   "navigation": {
     "selectedUserPageObject": "[ESP32_TFT_LCD_TS_ILI9341_LVGL_EEZ_STUDIO.eez-project]:/userPages/0",
-    "selectedActionObject": "[ESP32_TFT_LCD_TS_ILI9341_LVGL_EEZ_STUDIO.eez-project]:/actions/1",
+    "selectedGlobalVariableObject": "[ESP32_TFT_LCD_TS_ILI9341_LVGL_EEZ_STUDIO.eez-project]:/variables/globalVariables/0",
+    "selectedBitmapObject": "[ESP32_TFT_LCD_TS_ILI9341_LVGL_EEZ_STUDIO.eez-project]:/bitmaps/0",
     "subnavigationSelectedItems": {
       "variables-tab/sub-navigation/selected-item": "Global"
     }
@@ -24,7 +25,7 @@
           },
           {
             "type": "border",
-            "selected": 0,
+            "selected": 2,
             "size": 240,
             "location": "right",
             "children": [
@@ -219,8 +220,7 @@
                   },
                   "icon": "svg:page"
                 }
-              ],
-              "active": true
+              ]
             },
             {
               "type": "row",
@@ -240,7 +240,8 @@
                       "enableClose": false,
                       "icon": "svg:properties"
                     }
-                  ]
+                  ],
+                  "active": true
                 },
                 {
                   "type": "tabset",
@@ -1085,13 +1086,19 @@
       "selectionFront": {},
       "selectionBack": {
         "0": {
-          "0": {}
+          "0": {
+            "$selected": true
+          },
+          "4": {},
+          "7": {
+            "0": {}
+          }
         }
       },
       "transform": {
         "translate": {
-          "x": -401,
-          "y": -140
+          "x": -246,
+          "y": 43
         },
         "scale": 1
       },
@@ -1144,10 +1151,11 @@
   "lvglPart": "MAIN",
   "lvglState": "DEFAULT",
   "lvglExpandedPropertiesGroup": [
-    "POSITION AND SIZE"
+    "BACKGROUND"
   ],
   "showInactiveFlowsInDebugger": true,
   "globalFlowZoom": true,
   "flowZoom": 1,
-  "implementationLanguage": "C"
+  "implementationLanguage": "C++",
+  "openDialogDefaultPath": "C:\\Users\\samik\\Downloads\\TFT 3.5 Inch (4).png"
 }

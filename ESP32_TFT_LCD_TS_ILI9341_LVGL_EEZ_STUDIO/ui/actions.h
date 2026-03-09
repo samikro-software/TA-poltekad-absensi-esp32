@@ -7,9 +7,6 @@
 extern "C" {
 #endif
 
-extern void action_bt_push(lv_event_t * e);
-extern void action_change_screen(lv_event_t * e);
-
 #ifdef __cplusplus
 }
 #endif

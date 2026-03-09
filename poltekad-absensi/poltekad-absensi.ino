@@ -1,39 +1,61 @@
 /*Using LVGL with Arduino requires some extra steps:
  *Be sure to read the docs here: https://docs.lvgl.io/master/integration/framework/arduino.html  */
 
-#include <lvgl.h>
+#include <lvgl.h>         // version 9.4.0 by kisvegabor
 #include "ui.h"
 #include "actions.h"
-#include <TFT_eSPI.h>
+#include <TFT_eSPI.h>     // version 2.5.43 by Bodmer
 #include "rtc-ds3231.h"
 RtcDs3231 rtc;
 
 #include "rfid.h"
 Rfid rf;
 
-void action_change_screen(lv_event_t * e) {
-    Serial.println("layar EEZ Studio telah ditekan!");
-    
-    // Contoh: Menyalakan LED fisik di ESP32
-    // static bool status = false;
-    // status = !status;
-    // digitalWrite(2, status ? HIGH : LOW);
+#include "SD.h"           // if conflict, delete SD folder in C:Users/../AppData/Local/Arduino15
+#include "FS.h"
+// microSD Card Reader connections
+#define SD_CS         5
+#define SPI_MOSI      23 
+#define SPI_MISO      19
+#define SPI_SCK       18
+File dir;
+
+#include "vars.h"
+
+char dt_time[100] = { 0 };
+
+const char *get_var_dt_time() {
+    return dt_time;
 }
 
-void action_bt_push(lv_event_t * e) {
-    Serial.println("Tombol di layar EEZ Studio telah ditekan!");
-    // PENTING: Cek apakah event-nya benar-benar "CLICKED"
-    lv_event_code_t code = lv_event_get_code(e);
+void set_var_dt_time(const char *value) {
+    strncpy(dt_time, value, sizeof(dt_time) / sizeof(char));
+    dt_time[sizeof(dt_time) / sizeof(char) - 1] = 0;
+}
+
+// void action_change_screen(lv_event_t * e) {
+    // Serial.println("layar EEZ Studio telah ditekan!");
     
-    if (code == LV_EVENT_CLICKED) {
-        Serial.println("Tombol benar-benar diklik!");
-        // Taruh kode absensi/logika di sini
-    }
     // Contoh: Menyalakan LED fisik di ESP32
     // static bool status = false;
     // status = !status;
     // digitalWrite(2, status ? HIGH : LOW);
-}
+// }
+
+// void action_bt_push(lv_event_t * e) {
+    // Serial.println("Tombol di layar EEZ Studio telah ditekan!");
+    // PENTING: Cek apakah event-nya benar-benar "CLICKED"
+    // lv_event_code_t code = lv_event_get_code(e);
+    
+    // if (code == LV_EVENT_CLICKED) {
+        // Serial.println("Tombol benar-benar diklik!");
+        // Taruh kode absensi/logika di sini
+    // }
+    // Contoh: Menyalakan LED fisik di ESP32
+    // static bool status = false;
+    // status = !status;
+    // digitalWrite(2, status ? HIGH : LOW);
+// }
 
 /*To use the built-in examples and demos of LVGL uncomment the includes below respectively.
  *You also need to copy `lvgl/examples` to `lvgl/src/examples`. Similarly for the demos `lvgl/demos` to `lvgl/src/demos`.
@@ -66,16 +88,6 @@ void my_print( lv_log_level_t level, const char * buf )
 /* LVGL calls it when a rendered image needs to copied to the display*/
 void my_disp_flush( lv_display_t *disp, const lv_area_t *area, uint8_t * px_map)
 {
-    /*Copy `px map` to the `area`*/
-
-    /*For example ("my_..." functions needs to be implemented by you)
-    uint32_t w = lv_area_get_width(area);
-    uint32_t h = lv_area_get_height(area);
-
-    my_set_window(area->x1, area->y1, w, h);
-    my_draw_bitmaps(px_map, w * h);
-     */
-
     uint32_t w = lv_area_get_width(area);
     uint32_t h = lv_area_get_height(area);
 
@@ -116,6 +128,7 @@ static uint32_t my_tick(void)
     return millis();
 }
 
+unsigned long timer_sd;
 unsigned long timeout;
 bool pg2 = false;
 unsigned char modal = 0;
@@ -125,6 +138,7 @@ TaskHandle_t Task2;
 
 void setup()
 {
+  delay(1000);
     String LVGL_Arduino = "Hello Arduino! ";
     LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() + "." + lv_version_patch();
 
@@ -196,11 +210,30 @@ void setup()
     // lv_obj_align( label, LV_ALIGN_CENTER, 0, 0 );
 
     ui_init();
+    lv_obj_add_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
     Serial.println( "Setup done" );
 
     rtc.init();
     rf.init();
+
+    // Set microSD Card CS as OUTPUT and set HIGH
+    pinMode(SD_CS, OUTPUT);      
+    digitalWrite(SD_CS, HIGH); 
+    
+    // Initialize SPI bus for microSD Card
+    // SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+    
+    // Start microSD Card
+    bool sdcard = SD.begin(SD_CS);
+
+    if(!sdcard) {
+        Serial.println("Error accessing microSD card!");
+        
+        // while(true); 
+    }
+
     timeout = millis();
+    timer_sd = millis();
 
     //create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
     xTaskCreatePinnedToCore(
@@ -241,22 +274,55 @@ void Task1code( void * pvParameters ){
       ui_tick(); // Penting untuk EEZ Flow
 
       if((millis() - timeout) > 5000){
-        timeout = millis();
+        DATETIME_TypeDef dt = rtc.getTime();
+        // Serial.printf("%02d:%02d:%02d\r\n", dt.time.hour, dt.time.minute, dt.time.second);
 
-        switch(modal){
-          case 0 : lv_screen_load_anim(objects.second_page, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false); break;
-          case 1 : lv_obj_remove_flag(objects.panel2, LV_OBJ_FLAG_HIDDEN); break;
-          case 2 : lv_obj_remove_flag(objects.panel3, LV_OBJ_FLAG_HIDDEN); break;
-          case 3 : lv_obj_remove_flag(objects.label3, LV_OBJ_FLAG_HIDDEN); break;
-          default : 
-            lv_obj_add_flag(objects.panel2, LV_OBJ_FLAG_HIDDEN); 
-            lv_obj_add_flag(objects.panel3, LV_OBJ_FLAG_HIDDEN); 
-            lv_obj_add_flag(objects.label3, LV_OBJ_FLAG_HIDDEN); 
-            lv_screen_load(objects.home_page);
-          break;
-        }
-        modal ++;
-        if(modal > 4) modal = 0;
+        // switch(modal){
+        //   case 0 : lv_screen_load_anim(objects.second_page, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false); break;
+        //   case 1 : lv_obj_remove_flag(objects.panel2, LV_OBJ_FLAG_HIDDEN); break;
+        //   case 2 : lv_obj_remove_flag(objects.panel3, LV_OBJ_FLAG_HIDDEN); break;
+        //   case 3 : lv_obj_remove_flag(objects.label3, LV_OBJ_FLAG_HIDDEN); break;
+        //   default : 
+        //     lv_obj_add_flag(objects.panel2, LV_OBJ_FLAG_HIDDEN); 
+        //     lv_obj_add_flag(objects.panel3, LV_OBJ_FLAG_HIDDEN); 
+        //     lv_obj_add_flag(objects.label3, LV_OBJ_FLAG_HIDDEN); 
+        //     lv_screen_load(objects.home_page);
+        //     rtc.init();
+        //   break;
+        // }
+        // modal ++;
+        // if(modal > 4) modal = 0;
+
+        // File root = SD.open("/");
+        // if(!root){
+        //     Serial.println("Failed to open directory");
+        //     // flag.sdcard = false;
+        //     return;
+        // }
+        // if(!root.isDirectory()){
+        //     Serial.println("Not a directory");
+        //     return;
+        // }
+
+        // File file = root.openNextFile();
+        // while(file){
+        //     if(file.isDirectory()){
+        //         Serial.print("  DIR : ");
+        //         Serial.println(file.name());
+        //     } else {
+        //         Serial.print("  FILE: ");
+        //         Serial.print(file.name());
+        //         Serial.print("  SIZE: ");
+        //         Serial.println(file.size());
+        //     }
+        //     file = root.openNextFile();
+
+        //     yield();
+        // }
+        // root.close();
+        // file.close();
+
+        timeout = millis();
       }
 
       byte card_uuid[10];
@@ -274,8 +340,7 @@ void Task2code( void * pvParameters ){
     Serial.println(xPortGetCoreID());
 
     for(;;){
-      DATETIME_TypeDef dt = rtc.getTime();
-      // Serial.printf("%02d:%02d:%02d\r\n", dt.time.hour, dt.time.minute, dt.time.second);
+      
 
       vTaskDelay(1000);
     }

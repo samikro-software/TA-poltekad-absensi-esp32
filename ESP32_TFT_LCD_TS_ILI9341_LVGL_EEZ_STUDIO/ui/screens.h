@@ -19,7 +19,18 @@ enum ScreensEnum {
 typedef struct _objects_t {
     lv_obj_t *home_page;
     lv_obj_t *second_page;
-    lv_obj_t *button1;
+    lv_obj_t *lb_time;
+    lv_obj_t *lb_date;
+    lv_obj_t *lb_connection;
+    lv_obj_t *lb_state;
+    lv_obj_t *lb_mark;
+    lv_obj_t *lb_total_offline;
+    lv_obj_t *lb_scan;
+    lv_obj_t *pl_modal;
+    lv_obj_t *obj0;
+    lv_obj_t *lb_name;
+    lv_obj_t *lb_report_state;
+    lv_obj_t *lb_report_time;
     lv_obj_t *label2;
     lv_obj_t *panel2;
     lv_obj_t *panel3;
