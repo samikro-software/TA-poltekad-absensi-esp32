@@ -1,12 +1,20 @@
-/* ESP32 version 2.1.17  */
+#include <WiFi.h>         // ESP32 version 2.1.17
+#include <WiFiUDP.h>
+#include <NTPClient.h>
+const long utcOffsetInSeconds = 25200;
+// Define NTP Client to get time
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "id.pool.ntp.org", utcOffsetInSeconds);
 
-#include <WiFi.h>
 #include <lvgl.h>         // version 9.4.0 by kisvegabor
 #include <TFT_eSPI.h>     // version 2.5.43 by Bodmer
 #include "ui.h"
 
-const char* ssid     = "OFFICE RND";
-const char* password = "seipandaan";
+// const char* ssid     = "OFFICE RND";
+// const char* password = "seipandaan";
+
+const char* ssid     = "Valerie2";
+const char* password = "ve12345678";
 
 #include "rtc-ds3231.h"
 RtcDs3231 rtc;
@@ -65,7 +73,13 @@ typedef struct{
 }TIMEOUT_TypeDef;
 TIMEOUT_TypeDef timeout;
 
-bool pg2 = false;
+typedef struct{
+  bool wifi;
+  bool page2;
+  bool sdcard;
+}FLAG_TypeDef;
+FLAG_TypeDef flag;
+
 unsigned char modal = 0;
 
 TaskHandle_t Task1;
@@ -73,7 +87,7 @@ TaskHandle_t Task2;
 
 void setup()
 {
-  delay(1000);
+  delay(3000);
   Serial.begin( 115200 );
   String LVGL_Arduino = "Hello World! ";
   LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() + "." + lv_version_patch();
@@ -106,15 +120,18 @@ void setup()
   // SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
   
   // Start microSD Card
-  bool sdcard = SD.begin(SD_CS);
+  flag.sdcard = SD.begin(SD_CS);
 
-  if(!sdcard) {
+  if(!flag.sdcard) {
     Serial.println("Error accessing microSD card!");
   }
 
   timeout.timer = millis();
   timeout.sdcard = millis();
-  timeout.wifi = millis();
+  timeout.wifi = millis() - 55000;
+
+  flag.wifi = false;
+  flag.page2 = false;
 
   //create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
   xTaskCreatePinnedToCore(
@@ -127,35 +144,18 @@ void setup()
     0          /* pin task to core 0 */
   );
 
-  // xTaskCreatePinnedToCore(
-  //   Task2code,   /* Task function. */
-  //   "Task2",     /* name of task. */
-  //   4096,       /* Stack size of task */
-  //   NULL,        /* parameter of the task */
-  //   1,           /* priority of the task */
-  //   &Task2,      /* Task handle to keep track of created task */
-  //   1          /* pin task to core 0 */
-  // );
+  xTaskCreatePinnedToCore(
+    Task2code,   /* Task function. */
+    "Task2",     /* name of task. */
+    4096,       /* Stack size of task */
+    NULL,        /* parameter of the task */
+    1,           /* priority of the task */
+    &Task2,      /* Task handle to keep track of created task */
+    1          /* pin task to core 0 */
+  );
 }
 
-void loop(){
-  if(WiFi.status() == WL_CONNECTED){
-    Serial.println("Connected");
-  }
-  else{
-    if((millis() - timeout.wifi) > 60000){
-      Serial.println("Connecting...");
-      WiFi.disconnect();
-      WiFi.mode(WIFI_STA);
-
-      yield();
-      WiFi.begin(ssid, password);
-  
-      timeout.wifi = millis(); //  reset wifi_timeout
-      Serial.println("Done");
-    }
-  }
-}
+void loop(){}
 
 //Task1code: blinks an LED every 1000 ms
 void Task1code( void * pvParameters ){
@@ -168,6 +168,7 @@ void Task1code( void * pvParameters ){
         DATETIME_TypeDef dt = rtc.getTime();
         lv_label_set_text_fmt(objects.lb_time, "%02d:%02d:%02d", dt.time.hour, dt.time.minute, dt.time.second);
         lv_label_set_text_fmt(objects.lb_date, "%02d-%02d-20%02d", dt.date.date, dt.date.month, dt.date.year);
+
 
         xSemaphoreGive(p_mutex);
       }
@@ -188,34 +189,37 @@ void Task1code( void * pvParameters ){
       // modal ++;
       // if(modal > 4) modal = 0;
 
-      // File root = SD.open("/");
-      // if(!root){
-      //     Serial.println("Failed to open directory");
-      //     // flag.sdcard = false;
-      //     return;
-      // }
-      // if(!root.isDirectory()){
-      //     Serial.println("Not a directory");
-      //     return;
-      // }
+      File root = SD.open("/");
+      if(!root){
+        Serial.println("Failed to open directory");
+        // flag.sdcard = false;
+        // return;
+      }
+      else if(!root.isDirectory()){
+        Serial.println("Not a directory");
+        // return;
+      }
+      else {
+        File file = root.openNextFile();
+        while(file){
+            if(file.isDirectory()){
+                Serial.print("  DIR : ");
+                Serial.println(file.name());
+            } else {
+                Serial.print("  FILE: ");
+                Serial.print(file.name());
+                Serial.print("  SIZE: ");
+                Serial.println(file.size());
+            }
+            file = root.openNextFile();
 
-      // File file = root.openNextFile();
-      // while(file){
-      //     if(file.isDirectory()){
-      //         Serial.print("  DIR : ");
-      //         Serial.println(file.name());
-      //     } else {
-      //         Serial.print("  FILE: ");
-      //         Serial.print(file.name());
-      //         Serial.print("  SIZE: ");
-      //         Serial.println(file.size());
-      //     }
-      //     file = root.openNextFile();
+            yield();
 
-      //     yield();
-      // }
-      // root.close();
-      // file.close();
+            break;
+        }
+        file.close();
+      }
+      root.close();
 
       timeout.timer = millis();
     }
@@ -231,25 +235,65 @@ void Task1code( void * pvParameters ){
 }
 
 //Task2code: blinks an LED every 1000 ms
-// void Task2code( void * pvParameters ){
-//   for(;;){
-//     if(WiFi.status() == WL_CONNECTED){
-//       // Serial.println("Connected");
-//     }
-//     else{
-//       if((millis() - timeout.wifi) > 60000){
-//         Serial.println("Connecting...");
-//         WiFi.disconnect();
-//         WiFi.mode(WIFI_STA);
+void Task2code( void * pvParameters ){
+  for(;;){
+    if(WiFi.status() == WL_CONNECTED){
+      if(!flag.wifi){
+        flag.wifi = true;
 
-//         yield();
-//         WiFi.begin(ssid, password);
+        timeClient.setUpdateInterval(60000);
+        timeClient.begin();
 
-//         timeout.wifi = millis(); //  reset wifi_timeout
-//         Serial.println("Done");
-//       }
-//     }
-//     vTaskDelay(pdMS_TO_TICKS(1000));
-//   }
-// }
+        if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+          lv_label_set_text_fmt(objects.lb_connection, "Online");
+
+          xSemaphoreGive(p_mutex);
+        }
+      }
+      else{
+        if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+          /* NTP Section */
+          if(timeClient.update() && timeClient.isTimeSet()){
+              DATETIME_TypeDef dt;
+              time_t epochTime = timeClient.getEpochTime();
+
+              struct tm *ptm = gmtime ((time_t *)&epochTime); 
+              dt.date.date = ptm->tm_mday;
+              dt.date.month = ptm->tm_mon+1;
+              dt.date.year = (ptm->tm_year - 100);		// (1900 - 2000)
+              dt.time.hour = ptm->tm_hour;
+              dt.time.minute = ptm->tm_min;
+              dt.time.second = ptm->tm_sec;
+              dt.day = (FlagDays_t) timeClient.getDay();
+
+              rtc.setTime(dt);
+
+              timeClient.end();
+          }
+
+          xSemaphoreGive(p_mutex);
+        }
+      }      
+    }
+    else{
+      if((millis() - timeout.wifi) > 60000){
+        if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+          lv_label_set_text_fmt(objects.lb_connection, "Offline");
+
+          xSemaphoreGive(p_mutex);
+        }
+
+        Serial.println("Connecting...");
+        WiFi.disconnect();
+        WiFi.mode(WIFI_STA);
+
+        yield();
+        WiFi.begin(ssid, password);
+
+        timeout.wifi = millis(); //  reset wifi_timeout
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
 
