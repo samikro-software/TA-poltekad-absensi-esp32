@@ -1,7 +1,6 @@
 {
   "navigation": {
     "selectedUserPageObject": "[ESP32_TFT_LCD_TS_ILI9341_LVGL_EEZ_STUDIO.eez-project]:/userPages/0",
-    "selectedGlobalVariableObject": "[ESP32_TFT_LCD_TS_ILI9341_LVGL_EEZ_STUDIO.eez-project]:/variables/globalVariables/0",
     "selectedBitmapObject": "[ESP32_TFT_LCD_TS_ILI9341_LVGL_EEZ_STUDIO.eez-project]:/bitmaps/0",
     "subnavigationSelectedItems": {
       "variables-tab/sub-navigation/selected-item": "Global"
@@ -220,7 +219,8 @@
                   },
                   "icon": "svg:page"
                 }
-              ]
+              ],
+              "active": true
             },
             {
               "type": "row",
@@ -240,8 +240,7 @@
                       "enableClose": false,
                       "icon": "svg:properties"
                     }
-                  ],
-                  "active": true
+                  ]
                 },
                 {
                   "type": "tabset",
@@ -1086,9 +1085,7 @@
       "selectionFront": {},
       "selectionBack": {
         "0": {
-          "0": {
-            "$selected": true
-          },
+          "0": {},
           "4": {},
           "7": {
             "0": {}
@@ -1098,7 +1095,7 @@
       "transform": {
         "translate": {
           "x": -246,
-          "y": 43
+          "y": -157
         },
         "scale": 1
       },
@@ -1151,7 +1148,7 @@
   "lvglPart": "MAIN",
   "lvglState": "DEFAULT",
   "lvglExpandedPropertiesGroup": [
-    "BACKGROUND"
+    "TEXT"
   ],
   "showInactiveFlowsInDebugger": true,
   "globalFlowZoom": true,

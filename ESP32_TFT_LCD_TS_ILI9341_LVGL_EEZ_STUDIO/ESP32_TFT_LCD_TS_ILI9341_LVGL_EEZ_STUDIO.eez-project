@@ -106,16 +106,7 @@
   },
   "variables": {
     "objID": "c6c71e16-53e1-217f-d03b-cef56c6b037a",
-    "globalVariables": [
-      {
-        "objID": "4ce86bca-595f-4619-e740-e7a923596580",
-        "name": "dt_time",
-        "type": "string",
-        "defaultValue": "\"\"",
-        "persistent": false,
-        "native": false
-      }
-    ],
+    "globalVariables": [],
     "structures": [],
     "enums": []
   },
@@ -194,8 +185,8 @@
               },
               "group": "",
               "groupIndex": 0,
-              "text": "",
-              "textType": "expression",
+              "text": "23:00",
+              "textType": "literal",
               "longMode": "WRAP",
               "recolor": false,
               "previewValue": "23:00"
