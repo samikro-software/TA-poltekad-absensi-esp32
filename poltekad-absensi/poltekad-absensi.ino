@@ -6,15 +6,28 @@ const long utcOffsetInSeconds = 25200;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "id.pool.ntp.org", utcOffsetInSeconds);
 
+#include <Firebase_ESP_Client.h>
+
+#define API_KEY "AIzaSyDhZvfxFcPW4HEu9khIkBshOMeb0le6rBQ"
+#define DATABASE_URL "https://absensi-poltekad-default-rtdb.asia-southeast1.firebasedatabase.app"
+
+#define USER_EMAIL "samikro.id@gmail.com"
+#define USER_PASSWORD "CobaRtdb"
+
+// Objek data Firebase
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
 #include <lvgl.h>         // version 9.4.0 by kisvegabor
 #include <TFT_eSPI.h>     // version 2.5.43 by Bodmer
 #include "ui.h"
 
-// const char* ssid     = "OFFICE RND";
-// const char* password = "seipandaan";
+const char* ssid     = "OFFICE RND";
+const char* password = "seipandaan";
 
-const char* ssid     = "Valerie2";
-const char* password = "ve12345678";
+// const char* ssid     = "Valerie2";
+// const char* password = "ve12345678";
 
 #include "rtc-ds3231.h"
 RtcDs3231 rtc;
@@ -70,6 +83,7 @@ typedef struct{
   unsigned long wifi;
   unsigned long sdcard;
   unsigned long timer;
+  unsigned long send;
 }TIMEOUT_TypeDef;
 TIMEOUT_TypeDef timeout;
 
@@ -77,6 +91,7 @@ typedef struct{
   bool wifi;
   bool page2;
   bool sdcard;
+  bool firebase;
 }FLAG_TypeDef;
 FLAG_TypeDef flag;
 
@@ -147,7 +162,7 @@ void setup()
   xTaskCreatePinnedToCore(
     Task2code,   /* Task function. */
     "Task2",     /* name of task. */
-    4096,       /* Stack size of task */
+    8192,       /* Stack size of task */
     NULL,        /* parameter of the task */
     1,           /* priority of the task */
     &Task2,      /* Task handle to keep track of created task */
@@ -169,7 +184,6 @@ void Task1code( void * pvParameters ){
         lv_label_set_text_fmt(objects.lb_time, "%02d:%02d:%02d", dt.time.hour, dt.time.minute, dt.time.second);
         lv_label_set_text_fmt(objects.lb_date, "%02d-%02d-20%02d", dt.date.date, dt.date.month, dt.date.year);
 
-
         xSemaphoreGive(p_mutex);
       }
 
@@ -189,37 +203,37 @@ void Task1code( void * pvParameters ){
       // modal ++;
       // if(modal > 4) modal = 0;
 
-      File root = SD.open("/");
-      if(!root){
-        Serial.println("Failed to open directory");
-        // flag.sdcard = false;
-        // return;
-      }
-      else if(!root.isDirectory()){
-        Serial.println("Not a directory");
-        // return;
-      }
-      else {
-        File file = root.openNextFile();
-        while(file){
-            if(file.isDirectory()){
-                Serial.print("  DIR : ");
-                Serial.println(file.name());
-            } else {
-                Serial.print("  FILE: ");
-                Serial.print(file.name());
-                Serial.print("  SIZE: ");
-                Serial.println(file.size());
-            }
-            file = root.openNextFile();
+      // File root = SD.open("/");
+      // if(!root){
+      //   Serial.println("Failed to open directory");
+      //   // flag.sdcard = false;
+      //   // return;
+      // }
+      // else if(!root.isDirectory()){
+      //   Serial.println("Not a directory");
+      //   // return;
+      // }
+      // else {
+      //   File file = root.openNextFile();
+      //   while(file){
+      //       if(file.isDirectory()){
+      //           Serial.print("  DIR : ");
+      //           Serial.println(file.name());
+      //       } else {
+      //           Serial.print("  FILE: ");
+      //           Serial.print(file.name());
+      //           Serial.print("  SIZE: ");
+      //           Serial.println(file.size());
+      //       }
+      //       file = root.openNextFile();
 
-            yield();
+      //       yield();
 
-            break;
-        }
-        file.close();
-      }
-      root.close();
+      //       break;
+      //   }
+      //   file.close();
+      // }
+      // root.close();
 
       timeout.timer = millis();
     }
@@ -239,18 +253,61 @@ void Task2code( void * pvParameters ){
   for(;;){
     if(WiFi.status() == WL_CONNECTED){
       if(!flag.wifi){
-        flag.wifi = true;
+        Serial.println("Connected");
 
         timeClient.setUpdateInterval(60000);
         timeClient.begin();
+
+        // Gunakan server NTP terdekat (Indonesia)
+        configTime(7 * 3600, 0, "0.id.pool.ntp.org", "1.id.pool.ntp.org");
+
+        // Konfigurasi Firebase
+        config.api_key = API_KEY;
+        config.database_url = DATABASE_URL;
+
+        /* Assign the user sign in credentials */
+        auth.user.email = USER_EMAIL;
+        auth.user.password = USER_PASSWORD;
+
+        // Since v4.4.x, BearSSL engine was used, the SSL buffer need to be set.
+        // Large data transmission may require larger RX buffer, otherwise connection issue or data read time out can be occurred.
+        fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
+
+        // Limit the size of response payload to be collected in FirebaseData
+        fbdo.setResponseSize(2048);
+
+        // // Login sebagai anonim (karena rules kita set true)
+        Firebase.reconnectWiFi(true);
+        fbdo.keepAlive(true, 5, 20);
+        Firebase.begin(&config, &auth);
+
+        Firebase.setDoubleDigits(5);
+
+        config.timeout.serverResponse = 10 * 1000;
 
         if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
           lv_label_set_text_fmt(objects.lb_connection, "Online");
 
           xSemaphoreGive(p_mutex);
         }
+        flag.wifi = true;
+        Serial.println("done");
+      }
+      else if(!flag.firebase){
+
       }
       else{
+        if (Firebase.ready() && (millis() - timeout.send) > 10000) {
+          timeout.send = millis();
+          Serial.println("Kirim");
+          // Menggunakan setFloat untuk angka desimal
+          if (Firebase.RTDB.setFloat(&fbdo, "/sensor/suhu", 13.0)) {
+            Serial.println("Data terkirim ke: " + fbdo.dataPath());
+          } else {
+            Serial.println("Gagal: " + fbdo.errorReason());
+          }
+        }
+
         if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
           /* NTP Section */
           if(timeClient.update() && timeClient.isTimeSet()){
@@ -276,6 +333,8 @@ void Task2code( void * pvParameters ){
       }      
     }
     else{
+      flag.wifi = false;
+      flag.firebase = false;
       if((millis() - timeout.wifi) > 60000){
         if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
           lv_label_set_text_fmt(objects.lb_connection, "Offline");
