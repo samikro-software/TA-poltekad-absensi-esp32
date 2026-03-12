@@ -6,18 +6,21 @@ const long utcOffsetInSeconds = 25200;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "id.pool.ntp.org", utcOffsetInSeconds);
 
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+
 #include <Firebase_ESP_Client.h>
 
-#define API_KEY "AIzaSyDhZvfxFcPW4HEu9khIkBshOMeb0le6rBQ"
-#define DATABASE_URL "https://absensi-poltekad-default-rtdb.asia-southeast1.firebasedatabase.app"
+// #define API_KEY "AIzaSyDhZvfxFcPW4HEu9khIkBshOMeb0le6rBQ"
+// #define DATABASE_URL "https://absensi-poltekad-default-rtdb.asia-southeast1.firebasedatabase.app"
 
-#define USER_EMAIL "samikro.id@gmail.com"
-#define USER_PASSWORD "CobaRtdb"
+// #define USER_EMAIL "samikro.id@gmail.com"
+// #define USER_PASSWORD "CobaRtdb"
 
 // Objek data Firebase
-FirebaseData fbdo;
-FirebaseAuth auth;
-FirebaseConfig config;
+// FirebaseData fbdo;
+// FirebaseAuth auth;
+// FirebaseConfig config;
 
 #include <lvgl.h>         // version 9.4.0 by kisvegabor
 #include <TFT_eSPI.h>     // version 2.5.43 by Bodmer
@@ -84,6 +87,8 @@ typedef struct{
   unsigned long sdcard;
   unsigned long timer;
   unsigned long send;
+  unsigned long card;
+  unsigned long rfid;
 }TIMEOUT_TypeDef;
 TIMEOUT_TypeDef timeout;
 
@@ -92,6 +97,7 @@ typedef struct{
   bool page2;
   bool sdcard;
   bool firebase;
+  bool card;
 }FLAG_TypeDef;
 FLAG_TypeDef flag;
 
@@ -144,6 +150,7 @@ void setup()
   timeout.timer = millis();
   timeout.sdcard = millis();
   timeout.wifi = millis() - 55000;
+  timeout.rfid = millis();
 
   flag.wifi = false;
   flag.page2 = false;
@@ -186,6 +193,7 @@ void Task1code( void * pvParameters ){
 
         xSemaphoreGive(p_mutex);
       }
+      else Serial.println("timeout");
 
       // switch(modal){
       //   case 0 : lv_screen_load_anim(objects.second_page, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false); break;
@@ -238,10 +246,22 @@ void Task1code( void * pvParameters ){
       timeout.timer = millis();
     }
 
-    byte card_uuid[10];
+    byte card_uuid[5];
     unsigned char card_length = rf.loop(card_uuid);
     if(card_length){
-      Serial.printf("%02X %02X %02X\r\n", card_uuid[0], card_uuid[1], card_uuid[2]);
+      timeout.rfid = millis();
+      flag.card = true;
+      timeout.card = millis();
+      Serial.println("card");
+      lv_label_set_text_fmt(objects.lb_scan, "%02X%02X%02X%02X", card_uuid[0], card_uuid[1], card_uuid[2], card_uuid[3]);
+    }
+    else if(flag.card && (millis() - timeout.card) > 10000){
+      flag.card = false;
+      lv_label_set_text_fmt(objects.lb_scan, "kosong");
+    }
+    else if((millis() - timeout.rfid) > 60000){
+      rf.init();
+      timeout.rfid = millis();
     }
 
     vTaskDelay(pdMS_TO_TICKS(5));
@@ -258,32 +278,33 @@ void Task2code( void * pvParameters ){
         timeClient.setUpdateInterval(60000);
         timeClient.begin();
 
-        // Gunakan server NTP terdekat (Indonesia)
+        // // Gunakan server NTP terdekat (Indonesia)
         configTime(7 * 3600, 0, "0.id.pool.ntp.org", "1.id.pool.ntp.org");
 
-        // Konfigurasi Firebase
-        config.api_key = API_KEY;
-        config.database_url = DATABASE_URL;
+        // // Konfigurasi Firebase
+        // config.api_key = API_KEY;
+        // config.database_url = DATABASE_URL;
 
-        /* Assign the user sign in credentials */
-        auth.user.email = USER_EMAIL;
-        auth.user.password = USER_PASSWORD;
+        // /* Assign the user sign in credentials */
+        // auth.user.email = USER_EMAIL;
+        // auth.user.password = USER_PASSWORD;
 
-        // Since v4.4.x, BearSSL engine was used, the SSL buffer need to be set.
-        // Large data transmission may require larger RX buffer, otherwise connection issue or data read time out can be occurred.
-        fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
+        // // Since v4.4.x, BearSSL engine was used, the SSL buffer need to be set.
+        // // Large data transmission may require larger RX buffer, otherwise connection issue or data read time out can be occurred.
+        // fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
 
-        // Limit the size of response payload to be collected in FirebaseData
-        fbdo.setResponseSize(2048);
+        // // Limit the size of response payload to be collected in FirebaseData
+        // fbdo.setResponseSize(2048);
 
-        // // Login sebagai anonim (karena rules kita set true)
-        Firebase.reconnectWiFi(true);
-        fbdo.keepAlive(true, 5, 20);
-        Firebase.begin(&config, &auth);
+        // // // Login sebagai anonim (karena rules kita set true)
+        // Firebase.reconnectWiFi(true);
+        // fbdo.keepAlive(true, 5, 20);
+        // Firebase.begin(&config, &auth);
 
-        Firebase.setDoubleDigits(5);
+        // Firebase.setDoubleDigits(5);
 
-        config.timeout.serverResponse = 10 * 1000;
+        // config.timeout.serverResponse = 10 * 1000;
+        // config.signer.test_mode = true; // Mode testing terkadang bypass beberapa check
 
         if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
           lv_label_set_text_fmt(objects.lb_connection, "Online");
@@ -293,42 +314,76 @@ void Task2code( void * pvParameters ){
         flag.wifi = true;
         Serial.println("done");
       }
-      else if(!flag.firebase){
-
-      }
       else{
-        if (Firebase.ready() && (millis() - timeout.send) > 10000) {
+        // if (Firebase.ready() && (millis() - timeout.send) > 10000) {
+        //   timeout.send = millis();
+        //   Serial.println("Kirim");
+        //   // Menggunakan setFloat untuk angka desimal
+        //   if (Firebase.RTDB.setFloat(&fbdo, "/sensor/suhu", 13.0)) {
+        //     Serial.println("Data terkirim ke: " + fbdo.dataPath());
+        //   } else {
+        //     Serial.println("Gagal: " + fbdo.errorReason());
+        //   }
+        // }
+
+        if((millis() - timeout.send) > 60000){
+          WiFiClientSecure client;
+          client.setInsecure(); // <--- Ini kuncinya, tidak perlu CA Cert
+          client.setTimeout(50);
+
+          HTTPClient http;
+          http.setTimeout(50000);
+          // URL wajib diawali https://
+          // if(http.begin(client, "https://us-central1-absensi-poltekad.cloudfunctions.net/api")){
+          if(http.begin(client, "https://absensi.indobell.net")){
+            Serial.println("start");
+            // http.addHeader("Content-Type", "application/json");
+            // http.addHeader("Host", "https://us-central1-absensi-poltekad.cloudfunctions.net");
+
+            // FirebaseJson payload;
+            // payload.add("uuid", "87654321");
+            
+            // String jsonStr;
+            // payload.toString(jsonStr, true);
+
+            // int httpResponseCode = http.POST(jsonStr);
+            int httpResponseCode = http.GET();
+
+            if (httpResponseCode > 0) {
+              // String responBody = http.getString();
+
+              Serial.printf("Berhasil, kode: %d\n", httpResponseCode);
+              // Serial.println(responBody);
+            } else {
+              Serial.printf("Gagal: %s\n", http.errorToString(httpResponseCode).c_str());
+            }
+            http.end();
+          }           
+          Serial.println("end");
           timeout.send = millis();
-          Serial.println("Kirim");
-          // Menggunakan setFloat untuk angka desimal
-          if (Firebase.RTDB.setFloat(&fbdo, "/sensor/suhu", 13.0)) {
-            Serial.println("Data terkirim ke: " + fbdo.dataPath());
-          } else {
-            Serial.println("Gagal: " + fbdo.errorReason());
-          }
         }
-
-        if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+        
           /* NTP Section */
-          if(timeClient.update() && timeClient.isTimeSet()){
-              DATETIME_TypeDef dt;
-              time_t epochTime = timeClient.getEpochTime();
+        if(timeClient.update() && timeClient.isTimeSet()){
+          if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+            DATETIME_TypeDef dt;
+            time_t epochTime = timeClient.getEpochTime();
 
-              struct tm *ptm = gmtime ((time_t *)&epochTime); 
-              dt.date.date = ptm->tm_mday;
-              dt.date.month = ptm->tm_mon+1;
-              dt.date.year = (ptm->tm_year - 100);		// (1900 - 2000)
-              dt.time.hour = ptm->tm_hour;
-              dt.time.minute = ptm->tm_min;
-              dt.time.second = ptm->tm_sec;
-              dt.day = (FlagDays_t) timeClient.getDay();
+            struct tm *ptm = gmtime ((time_t *)&epochTime); 
+            dt.date.date = ptm->tm_mday;
+            dt.date.month = ptm->tm_mon+1;
+            dt.date.year = (ptm->tm_year - 100);		// (1900 - 2000)
+            dt.time.hour = ptm->tm_hour;
+            dt.time.minute = ptm->tm_min;
+            dt.time.second = ptm->tm_sec;
+            dt.day = (FlagDays_t) timeClient.getDay();
 
-              rtc.setTime(dt);
+            rtc.setTime(dt);
 
-              timeClient.end();
+            timeClient.end();
+
+            xSemaphoreGive(p_mutex);
           }
-
-          xSemaphoreGive(p_mutex);
         }
       }      
     }
