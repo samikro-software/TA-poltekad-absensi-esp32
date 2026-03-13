@@ -26,11 +26,11 @@ NTPClient timeClient(ntpUDP, "id.pool.ntp.org", utcOffsetInSeconds);
 #include <TFT_eSPI.h>     // version 2.5.43 by Bodmer
 #include "ui.h"
 
-const char* ssid     = "OFFICE RND";
-const char* password = "seipandaan";
+// const char* ssid     = "OFFICE RND";
+// const char* password = "seipandaan";
 
-// const char* ssid     = "Valerie2";
-// const char* password = "ve12345678";
+const char* ssid     = "Valerie2";
+const char* password = "ve12345678";
 
 #include "rtc-ds3231.h"
 RtcDs3231 rtc;
@@ -334,26 +334,26 @@ void Task2code( void * pvParameters ){
           HTTPClient http;
           http.setTimeout(50000);
           // URL wajib diawali https://
-          // if(http.begin(client, "https://us-central1-absensi-poltekad.cloudfunctions.net/api")){
-          if(http.begin(client, "https://absensi.indobell.net")){
+          if(http.begin(client, "https://us-central1-absensi-poltekad.cloudfunctions.net/api")){
+          // if(http.begin(client, "https://absensi.indobell.net")){
             Serial.println("start");
-            // http.addHeader("Content-Type", "application/json");
-            // http.addHeader("Host", "https://us-central1-absensi-poltekad.cloudfunctions.net");
+            http.addHeader("Content-Type", "application/json");
+            http.addHeader("Host", "https://us-central1-absensi-poltekad.cloudfunctions.net");
 
-            // FirebaseJson payload;
-            // payload.add("uuid", "87654321");
+            FirebaseJson payload;
+            payload.add("uuid", "87654321");
             
-            // String jsonStr;
-            // payload.toString(jsonStr, true);
+            String jsonStr;
+            payload.toString(jsonStr, true);
 
-            // int httpResponseCode = http.POST(jsonStr);
-            int httpResponseCode = http.GET();
+            int httpResponseCode = http.POST(jsonStr);
+            // int httpResponseCode = http.GET();
 
             if (httpResponseCode > 0) {
-              // String responBody = http.getString();
+              String responBody = http.getString();
 
               Serial.printf("Berhasil, kode: %d\n", httpResponseCode);
-              // Serial.println(responBody);
+              Serial.println(responBody);
             } else {
               Serial.printf("Gagal: %s\n", http.errorToString(httpResponseCode).c_str());
             }
