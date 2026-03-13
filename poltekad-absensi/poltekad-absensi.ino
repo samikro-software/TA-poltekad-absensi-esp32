@@ -89,6 +89,7 @@ typedef struct{
   unsigned long send;
   unsigned long card;
   unsigned long rfid;
+  unsigned long scan;
 }TIMEOUT_TypeDef;
 TIMEOUT_TypeDef timeout;
 
@@ -98,8 +99,15 @@ typedef struct{
   bool sdcard;
   bool firebase;
   bool card;
+  bool sending;
 }FLAG_TypeDef;
 FLAG_TypeDef flag;
+
+typedef struct{
+  unsigned char finger;
+  char uuid[10];
+}ID_TypeDef;
+ID_TypeDef id;
 
 unsigned char modal = 0;
 
@@ -191,9 +199,11 @@ void Task1code( void * pvParameters ){
         lv_label_set_text_fmt(objects.lb_time, "%02d:%02d:%02d", dt.time.hour, dt.time.minute, dt.time.second);
         lv_label_set_text_fmt(objects.lb_date, "%02d-%02d-20%02d", dt.date.date, dt.date.month, dt.date.year);
 
+        if(flag.wifi) lv_label_set_text_fmt(objects.lb_connection, "%s", WiFi.localIP().toString());
+        else lv_label_set_text_fmt(objects.lb_connection, "%s", ssid);
+
         xSemaphoreGive(p_mutex);
       }
-      else Serial.println("timeout");
 
       // switch(modal){
       //   case 0 : lv_screen_load_anim(objects.second_page, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false); break;
@@ -246,22 +256,38 @@ void Task1code( void * pvParameters ){
       timeout.timer = millis();
     }
 
-    byte card_uuid[5];
-    unsigned char card_length = rf.loop(card_uuid);
-    if(card_length){
-      timeout.rfid = millis();
-      flag.card = true;
-      timeout.card = millis();
-      Serial.println("card");
-      lv_label_set_text_fmt(objects.lb_scan, "%02X%02X%02X%02X", card_uuid[0], card_uuid[1], card_uuid[2], card_uuid[3]);
-    }
-    else if(flag.card && (millis() - timeout.card) > 10000){
-      flag.card = false;
-      lv_label_set_text_fmt(objects.lb_scan, "kosong");
-    }
-    else if((millis() - timeout.rfid) > 60000){
-      rf.init();
-      timeout.rfid = millis();
+    if((millis() - timeout.scan) > 250){
+      if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+        byte card_uuid[5];
+        unsigned char card_length = rf.loop(card_uuid);
+        if(card_length){
+          sprintf(id.uuid, "%02X%02X%02X%02X", card_uuid[0], card_uuid[1], card_uuid[2], card_uuid[3]);
+          timeout.rfid = millis();
+          flag.card = true;
+
+          if(flag.firebase) flag.sending = true;
+
+          timeout.card = millis();
+          lv_label_set_text_fmt(objects.lb_scan, "%s", id.uuid);
+          lv_label_set_text(objects.lb_mark, "Silahkan Tempel Sidik Jari !!!");
+        }
+        else if(flag.card && !flag.sending && (millis() - timeout.card) > 10000){
+          flag.card = false;
+          lv_label_set_text_fmt(objects.lb_scan, "kosong");
+          lv_label_set_text(objects.lb_mark, "Tempel Karu Di Bawah Ini !!!");
+          lv_obj_add_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+        }
+        else if((millis() - timeout.rfid) > 60000){
+          rf.init();
+          timeout.rfid = millis();
+        }
+
+        xSemaphoreGive(p_mutex);
+      }
+
+      timeout.scan = millis();
     }
 
     vTaskDelay(pdMS_TO_TICKS(5));
@@ -273,8 +299,6 @@ void Task2code( void * pvParameters ){
   for(;;){
     if(WiFi.status() == WL_CONNECTED){
       if(!flag.wifi){
-        Serial.println("Connected");
-
         timeClient.setUpdateInterval(60000);
         timeClient.begin();
 
@@ -306,15 +330,23 @@ void Task2code( void * pvParameters ){
         // config.timeout.serverResponse = 10 * 1000;
         // config.signer.test_mode = true; // Mode testing terkadang bypass beberapa check
 
-        if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
-          lv_label_set_text_fmt(objects.lb_connection, "Online");
-
-          xSemaphoreGive(p_mutex);
-        }
         flag.wifi = true;
-        Serial.println("done");
       }
       else{
+        bool ready = false;
+        String jsonStr;
+
+        if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+          flag.firebase = true;
+
+          if(flag.card){
+            FirebaseJson payload;
+            payload.add("uuid", id.uuid);
+            payload.toString(jsonStr, true);
+            ready = true;
+          }
+          xSemaphoreGive(p_mutex);
+        }
         // if (Firebase.ready() && (millis() - timeout.send) > 10000) {
         //   timeout.send = millis();
         //   Serial.println("Kirim");
@@ -326,7 +358,7 @@ void Task2code( void * pvParameters ){
         //   }
         // }
 
-        if((millis() - timeout.send) > 60000){
+        if(ready){
           WiFiClientSecure client;
           client.setInsecure(); // <--- Ini kuncinya, tidak perlu CA Cert
           client.setTimeout(50);
@@ -335,35 +367,60 @@ void Task2code( void * pvParameters ){
           http.setTimeout(50000);
           // URL wajib diawali https://
           if(http.begin(client, "https://us-central1-absensi-poltekad.cloudfunctions.net/api")){
-          // if(http.begin(client, "https://absensi.indobell.net")){
             Serial.println("start");
             http.addHeader("Content-Type", "application/json");
             http.addHeader("Host", "https://us-central1-absensi-poltekad.cloudfunctions.net");
 
-            FirebaseJson payload;
-            payload.add("uuid", "87654321");
-            
-            String jsonStr;
-            payload.toString(jsonStr, true);
+            if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+              lv_label_set_text(objects.lb_mark, "Mengirim !!!");
+              lv_obj_remove_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
+              lv_obj_remove_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
+              lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+
+              xSemaphoreGive(p_mutex);
+            }
 
             int httpResponseCode = http.POST(jsonStr);
-            // int httpResponseCode = http.GET();
 
             if (httpResponseCode > 0) {
               String responBody = http.getString();
-
               Serial.printf("Berhasil, kode: %d\n", httpResponseCode);
               Serial.println(responBody);
+
+              if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+                lv_label_set_text(objects.lb_mark, "Berhasil");
+  
+                lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+                
+                timeout.card = millis();
+
+                xSemaphoreGive(p_mutex);
+              }
             } else {
               Serial.printf("Gagal: %s\n", http.errorToString(httpResponseCode).c_str());
+
+              if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+                lv_label_set_text(objects.lb_mark, "Gagal !!!");
+                lv_obj_add_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+
+                xSemaphoreGive(p_mutex);
+              }
+              Serial.println("Gagal2");
             }
             http.end();
-          }           
-          Serial.println("end");
-          timeout.send = millis();
+          }
+
+          if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+            flag.sending = false;
+
+            xSemaphoreGive(p_mutex);
+          }
         }
         
-          /* NTP Section */
+        /* NTP Section */
         if(timeClient.update() && timeClient.isTimeSet()){
           if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
             DATETIME_TypeDef dt;
@@ -388,15 +445,14 @@ void Task2code( void * pvParameters ){
       }      
     }
     else{
-      flag.wifi = false;
-      flag.firebase = false;
+      if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+        flag.wifi = false;
+        flag.firebase = false;
+        flag.sending = false;
+        xSemaphoreGive(p_mutex);
+      }
+
       if((millis() - timeout.wifi) > 60000){
-        if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
-          lv_label_set_text_fmt(objects.lb_connection, "Offline");
-
-          xSemaphoreGive(p_mutex);
-        }
-
         Serial.println("Connecting...");
         WiFi.disconnect();
         WiFi.mode(WIFI_STA);
