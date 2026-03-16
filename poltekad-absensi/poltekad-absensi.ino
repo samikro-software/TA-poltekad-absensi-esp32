@@ -94,18 +94,21 @@ typedef struct{
 TIMEOUT_TypeDef timeout;
 
 typedef struct{
-  bool wifi;
-  bool page2;
   bool sdcard;
-  bool firebase;
   bool card;
+  bool wifi;
   bool sending;
+  bool success;
+  bool fail;
 }FLAG_TypeDef;
 FLAG_TypeDef flag;
 
 typedef struct{
   unsigned char finger;
   char uuid[10];
+  char name[50];
+  char dts[20];
+  DATETIME_TypeDef dt;
 }ID_TypeDef;
 ID_TypeDef id;
 
@@ -161,7 +164,9 @@ void setup()
   timeout.rfid = millis();
 
   flag.wifi = false;
-  flag.page2 = false;
+  flag.sending = false;
+  flag.success = false;
+  flag.fail = false;
 
   //create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
   xTaskCreatePinnedToCore(
@@ -195,12 +200,35 @@ void Task1code( void * pvParameters ){
 
     if((millis() - timeout.timer) > 1000){
       if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
-        DATETIME_TypeDef dt = rtc.getTime();
-        lv_label_set_text_fmt(objects.lb_time, "%02d:%02d:%02d", dt.time.hour, dt.time.minute, dt.time.second);
-        lv_label_set_text_fmt(objects.lb_date, "%02d-%02d-20%02d", dt.date.date, dt.date.month, dt.date.year);
+        id.dt = rtc.getTime();
+        lv_label_set_text_fmt(objects.lb_time, "%02d:%02d:%02d", id.dt.time.hour, id.dt.time.minute, id.dt.time.second);
+        lv_label_set_text_fmt(objects.lb_date, "%02d-%02d-20%02d", id.dt.date.date, id.dt.date.month, id.dt.date.year);
 
         if(flag.wifi) lv_label_set_text_fmt(objects.lb_connection, "%s", WiFi.localIP().toString());
         else lv_label_set_text_fmt(objects.lb_connection, "%s", ssid);
+
+        if(flag.success){
+          lv_label_set_text(objects.lb_mark, "Berhasil");
+          lv_label_set_text(objects.lb_name, id.name);
+          lv_label_set_text(objects.lb_report_time, id.dts);
+          lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+        }
+        else if(flag.fail){
+          lv_label_set_text(objects.lb_mark, "Berhasil");
+
+          lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_add_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
+        }
+        else if(flag.sending){
+          lv_label_set_text(objects.lb_mark, "Mengirim !!!");
+          lv_obj_remove_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+        }
+        else if(!flag.wifi){
+
+        }
 
         xSemaphoreGive(p_mutex);
       }
@@ -262,19 +290,20 @@ void Task1code( void * pvParameters ){
         unsigned char card_length = rf.loop(card_uuid);
         if(card_length){
           sprintf(id.uuid, "%02X%02X%02X%02X", card_uuid[0], card_uuid[1], card_uuid[2], card_uuid[3]);
+          sprintf(id.dts, "20%02d-%02d-%02d %02d:%02d:%02d", id.dt.date.year, id.dt.date.month, id.dt.date.date, id.dt.time.hour, id.dt.time.minute, id.dt.time.second);
           timeout.rfid = millis();
           flag.card = true;
-
-          if(flag.firebase) flag.sending = true;
-
+          flag.sending = true;
           timeout.card = millis();
           lv_label_set_text_fmt(objects.lb_scan, "%s", id.uuid);
           lv_label_set_text(objects.lb_mark, "Silahkan Tempel Sidik Jari !!!");
         }
         else if(flag.card && !flag.sending && (millis() - timeout.card) > 10000){
           flag.card = false;
+          flag.success = false;
+          flag.fail = false;
           lv_label_set_text_fmt(objects.lb_scan, "kosong");
-          lv_label_set_text(objects.lb_mark, "Tempel Karu Di Bawah Ini !!!");
+          lv_label_set_text(objects.lb_mark, "Tempel Kartu Di Bawah Ini !!!");
           lv_obj_add_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
           lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
           lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
@@ -337,9 +366,7 @@ void Task2code( void * pvParameters ){
         String jsonStr;
 
         if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
-          flag.firebase = true;
-
-          if(flag.card){
+          if(flag.sending){
             FirebaseJson payload;
             payload.add("uuid", id.uuid);
             payload.toString(jsonStr, true);
@@ -371,15 +398,6 @@ void Task2code( void * pvParameters ){
             http.addHeader("Content-Type", "application/json");
             http.addHeader("Host", "https://us-central1-absensi-poltekad.cloudfunctions.net");
 
-            if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
-              lv_label_set_text(objects.lb_mark, "Mengirim !!!");
-              lv_obj_remove_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
-              lv_obj_remove_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
-              lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
-
-              xSemaphoreGive(p_mutex);
-            }
-
             int httpResponseCode = http.POST(jsonStr);
 
             if (httpResponseCode > 0) {
@@ -387,36 +405,43 @@ void Task2code( void * pvParameters ){
               Serial.printf("Berhasil, kode: %d\n", httpResponseCode);
               Serial.println(responBody);
 
-              if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
-                lv_label_set_text(objects.lb_mark, "Berhasil");
-  
-                lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
-                
-                timeout.card = millis();
+              // Misal stringData didapat dari Firebase: {"user":{"nama":"Eka", "absensi":true}}
+              FirebaseJson json;
+              json.setJsonData(responBody); // Masukkan string JSON ke objek
 
+              FirebaseJsonData result; // Objek penampung hasil ekstraksi
+
+              // Ambil data dengan sistem Path
+              json.get(result, "status");
+
+              if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+                if (result.success) {
+                  memset(id.name, 0, sizeof(id.name));
+                  sprintf(id.name, "%s", result.stringValue.c_str());
+                    // result.stringValue adalah teks "Eka"
+                    // lv_label_set_text(objects.label_nama, result.stringValue.c_str());
+                }
+
+                flag.sending = false;                
+                flag.success = true;
+                timeout.card = millis();
                 xSemaphoreGive(p_mutex);
               }
+
+              Serial.println("Berhasil2");
             } else {
               Serial.printf("Gagal: %s\n", http.errorToString(httpResponseCode).c_str());
 
               if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
-                lv_label_set_text(objects.lb_mark, "Gagal !!!");
-                lv_obj_add_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
-
+                flag.sending = false;
+                flag.fail = true;
+                timeout.card = millis();
                 xSemaphoreGive(p_mutex);
               }
+              
               Serial.println("Gagal2");
             }
             http.end();
-          }
-
-          if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
-            flag.sending = false;
-
-            xSemaphoreGive(p_mutex);
           }
         }
         
@@ -447,7 +472,6 @@ void Task2code( void * pvParameters ){
     else{
       if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
         flag.wifi = false;
-        flag.firebase = false;
         flag.sending = false;
         xSemaphoreGive(p_mutex);
       }
