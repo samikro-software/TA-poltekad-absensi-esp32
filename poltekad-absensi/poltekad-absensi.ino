@@ -100,6 +100,7 @@ typedef struct{
   bool sending;
   bool success;
   bool fail;
+  bool store;
 }FLAG_TypeDef;
 FLAG_TypeDef flag;
 
@@ -116,6 +117,31 @@ unsigned char modal = 0;
 
 TaskHandle_t Task1;
 TaskHandle_t Task2;
+
+void writeFile(fs::FS &fs, const char * path, const char * message){
+    Serial.printf("Writing file: %s\n", path);
+
+    File file = fs.open(path, FILE_WRITE);
+    if(!file){
+        Serial.println("Failed to open file for writing");
+        return;
+    }
+    if(file.print(message)){
+        Serial.println("File written");
+    } else {
+        Serial.println("Write failed");
+    }
+    file.close();
+}
+
+void deleteFile(fs::FS &fs, const char * path){
+    Serial.printf("Deleting file: %s\n", path);
+    if(fs.remove(path)){
+        Serial.println("File deleted");
+    } else {
+        Serial.println("Delete failed");
+    }
+}
 
 void setup()
 {
@@ -215,10 +241,18 @@ void Task1code( void * pvParameters ){
           lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
         }
         else if(flag.fail){
-          lv_label_set_text(objects.lb_mark, "Berhasil");
-
+          lv_label_set_text(objects.lb_mark, "Simpan");
+          lv_label_set_text(objects.lb_name, "Memori");
+          lv_label_set_text(objects.lb_report_time, id.dts);
           lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
-          lv_obj_add_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+
+          if(!flag.store){
+            flag.store = true;
+            char directory[20];
+            sprintf(directory, "/%s", id.dts);
+            writeFile(SD, directory, id.uuid);
+          }
         }
         else if(flag.sending){
           lv_label_set_text(objects.lb_mark, "Mengirim !!!");
@@ -226,87 +260,75 @@ void Task1code( void * pvParameters ){
           lv_obj_remove_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
           lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
         }
-        else if(!flag.wifi){
-
-        }
 
         xSemaphoreGive(p_mutex);
       }
 
-      // switch(modal){
-      //   case 0 : lv_screen_load_anim(objects.second_page, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false); break;
-      //   case 1 : lv_obj_remove_flag(objects.panel2, LV_OBJ_FLAG_HIDDEN); break;
-      //   case 2 : lv_obj_remove_flag(objects.panel3, LV_OBJ_FLAG_HIDDEN); break;
-      //   case 3 : lv_obj_remove_flag(objects.label3, LV_OBJ_FLAG_HIDDEN); break;
-      //   default : 
-      //     lv_obj_add_flag(objects.panel2, LV_OBJ_FLAG_HIDDEN); 
-      //     lv_obj_add_flag(objects.panel3, LV_OBJ_FLAG_HIDDEN); 
-      //     lv_obj_add_flag(objects.label3, LV_OBJ_FLAG_HIDDEN); 
-      //     lv_screen_load(objects.home_page);
-      //     rtc.init();
-      //   break;
-      // }
-      // modal ++;
-      // if(modal > 4) modal = 0;
-
-      // File root = SD.open("/");
-      // if(!root){
-      //   Serial.println("Failed to open directory");
-      //   // flag.sdcard = false;
-      //   // return;
-      // }
-      // else if(!root.isDirectory()){
-      //   Serial.println("Not a directory");
-      //   // return;
-      // }
-      // else {
-      //   File file = root.openNextFile();
-      //   while(file){
-      //       if(file.isDirectory()){
-      //           Serial.print("  DIR : ");
-      //           Serial.println(file.name());
-      //       } else {
-      //           Serial.print("  FILE: ");
-      //           Serial.print(file.name());
-      //           Serial.print("  SIZE: ");
-      //           Serial.println(file.size());
-      //       }
-      //       file = root.openNextFile();
-
-      //       yield();
-
-      //       break;
-      //   }
-      //   file.close();
-      // }
-      // root.close();
-
       timeout.timer = millis();
     }
 
+    if((millis() - timeout.sdcard) > 10000){
+      File root = SD.open("/");
+      if(!root){
+        Serial.println("Failed to open directory");
+        // flag.sdcard = false;
+        // return;
+      }
+      else if(!root.isDirectory()){
+        Serial.println("Not a directory");
+        // return;
+      }
+      else {
+        File file = root.openNextFile();
+        while(file){
+            if(file.isDirectory()){
+                Serial.print("  DIR : ");
+                Serial.println(file.name());
+            } else {
+                Serial.print("  FILE: ");
+                Serial.print(file.name());
+                Serial.print("  SIZE: ");
+                Serial.println(file.size());
+            }
+            file = root.openNextFile();
+
+            yield();
+            // break;
+        }
+        file.close();
+      }
+      root.close();
+
+      timeout.sdcard = millis();
+    }
     if((millis() - timeout.scan) > 250){
       if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
-        byte card_uuid[5];
-        unsigned char card_length = rf.loop(card_uuid);
-        if(card_length){
-          sprintf(id.uuid, "%02X%02X%02X%02X", card_uuid[0], card_uuid[1], card_uuid[2], card_uuid[3]);
-          sprintf(id.dts, "20%02d-%02d-%02d %02d:%02d:%02d", id.dt.date.year, id.dt.date.month, id.dt.date.date, id.dt.time.hour, id.dt.time.minute, id.dt.time.second);
-          timeout.rfid = millis();
-          flag.card = true;
-          flag.sending = true;
-          timeout.card = millis();
-          lv_label_set_text_fmt(objects.lb_scan, "%s", id.uuid);
-          lv_label_set_text(objects.lb_mark, "Silahkan Tempel Sidik Jari !!!");
-        }
-        else if(flag.card && !flag.sending && (millis() - timeout.card) > 10000){
-          flag.card = false;
-          flag.success = false;
-          flag.fail = false;
-          lv_label_set_text_fmt(objects.lb_scan, "kosong");
-          lv_label_set_text(objects.lb_mark, "Tempel Kartu Di Bawah Ini !!!");
-          lv_obj_add_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
-          lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
-          lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+        if(!flag.sending){
+          if(!flag.card){
+            byte card_uuid[5];
+            unsigned char card_length = rf.loop(card_uuid);
+            if(card_length){
+              sprintf(id.uuid, "%02X%02X%02X%02X", card_uuid[0], card_uuid[1], card_uuid[2], card_uuid[3]);
+              sprintf(id.dts, "20%02d-%02d-%02d %02d:%02d:%02d", id.dt.date.year, id.dt.date.month, id.dt.date.date, id.dt.time.hour, id.dt.time.minute, id.dt.time.second);
+              timeout.rfid = millis();
+              flag.card = true;
+              flag.sending = true;
+              flag.store = false;
+              timeout.card = millis();
+              lv_label_set_text_fmt(objects.lb_scan, "%s", id.uuid);
+              lv_label_set_text(objects.lb_mark, "Silahkan Tempel Sidik Jari !!!");
+            }
+          }
+          else if((millis() - timeout.card) > 10000){
+            flag.card = false;
+            flag.success = false;
+            flag.fail = false;
+            lv_label_set_text_fmt(objects.lb_scan, "kosong");
+            lv_label_set_text(objects.lb_mark, "Tempel Kartu Di Bawah Ini !!!");
+            lv_obj_add_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+          }
         }
         else if((millis() - timeout.rfid) > 60000){
           rf.init();
@@ -388,10 +410,10 @@ void Task2code( void * pvParameters ){
         if(ready){
           WiFiClientSecure client;
           client.setInsecure(); // <--- Ini kuncinya, tidak perlu CA Cert
-          client.setTimeout(50);
+          client.setTimeout(20);
 
           HTTPClient http;
-          http.setTimeout(50000);
+          http.setTimeout(20000);
           // URL wajib diawali https://
           if(http.begin(client, "https://us-central1-absensi-poltekad.cloudfunctions.net/api")){
             Serial.println("start");
@@ -402,10 +424,8 @@ void Task2code( void * pvParameters ){
 
             if (httpResponseCode > 0) {
               String responBody = http.getString();
-              Serial.printf("Berhasil, kode: %d\n", httpResponseCode);
               Serial.println(responBody);
 
-              // Misal stringData didapat dari Firebase: {"user":{"nama":"Eka", "absensi":true}}
               FirebaseJson json;
               json.setJsonData(responBody); // Masukkan string JSON ke objek
 
@@ -418,8 +438,6 @@ void Task2code( void * pvParameters ){
                 if (result.success) {
                   memset(id.name, 0, sizeof(id.name));
                   sprintf(id.name, "%s", result.stringValue.c_str());
-                    // result.stringValue adalah teks "Eka"
-                    // lv_label_set_text(objects.label_nama, result.stringValue.c_str());
                 }
 
                 flag.sending = false;                
@@ -428,10 +446,8 @@ void Task2code( void * pvParameters ){
                 xSemaphoreGive(p_mutex);
               }
 
-              Serial.println("Berhasil2");
+              Serial.printf("Berhasil, kode: %d\n", httpResponseCode);
             } else {
-              Serial.printf("Gagal: %s\n", http.errorToString(httpResponseCode).c_str());
-
               if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
                 flag.sending = false;
                 flag.fail = true;
@@ -439,7 +455,7 @@ void Task2code( void * pvParameters ){
                 xSemaphoreGive(p_mutex);
               }
               
-              Serial.println("Gagal2");
+              Serial.printf("Gagal: %s\n", http.errorToString(httpResponseCode).c_str());
             }
             http.end();
           }
