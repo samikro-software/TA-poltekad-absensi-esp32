@@ -391,6 +391,9 @@ void Task2code( void * pvParameters ){
           if(flag.sending){
             FirebaseJson payload;
             payload.add("uuid", id.uuid);
+            payload.add("dateAt", id.dts);
+            payload.add("state", "masuk");
+
             payload.toString(jsonStr, true);
             ready = true;
           }
