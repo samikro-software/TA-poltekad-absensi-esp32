@@ -1,4 +1,4 @@
-#include <WiFi.h>         // ESP32 version 2.1.17
+#include <WiFi.h>         // ESP32 version 2.0.17
 #include <WiFiUDP.h>
 #include <NTPClient.h>
 const long utcOffsetInSeconds = 25200;
@@ -10,17 +10,6 @@ NTPClient timeClient(ntpUDP, "id.pool.ntp.org", utcOffsetInSeconds);
 #include <WiFiClientSecure.h>
 
 #include <Firebase_ESP_Client.h>
-
-// #define API_KEY "AIzaSyDhZvfxFcPW4HEu9khIkBshOMeb0le6rBQ"
-// #define DATABASE_URL "https://absensi-poltekad-default-rtdb.asia-southeast1.firebasedatabase.app"
-
-// #define USER_EMAIL "samikro.id@gmail.com"
-// #define USER_PASSWORD "CobaRtdb"
-
-// Objek data Firebase
-// FirebaseData fbdo;
-// FirebaseAuth auth;
-// FirebaseConfig config;
 
 #include <lvgl.h>         // version 9.4.0 by kisvegabor
 #include <TFT_eSPI.h>     // version 2.5.43 by Bodmer
@@ -90,6 +79,15 @@ static uint32_t my_tick(void) {
   return millis();
 }
 
+typedef enum{
+  ENROLL_RESET = 0,
+  ENROLL_FINGER1,
+  ENROLL_FINGER2,
+  ENROLL_STORE,
+  ENROLL_FINISH
+}ENROLL_t;
+ENROLL_t enroll_process;
+
 typedef struct{
   unsigned long wifi;
   unsigned long sdcard;
@@ -101,6 +99,7 @@ typedef struct{
   unsigned long sensor;
   unsigned long info;
   unsigned long button;
+  unsigned long enroll;
 }TIMEOUT_TypeDef;
 TIMEOUT_TypeDef timeout;
 
@@ -115,6 +114,7 @@ typedef struct{
   bool finger;
   bool sensor;
   bool pressed;
+  bool enroll;
 }FLAG_TypeDef;
 FLAG_TypeDef flag;
 
@@ -164,50 +164,28 @@ void deleteFile(fs::FS &fs, const char * path){
   else Serial.println("Delete failed");
 }
 
-// uint8_t getFingerprintID() {
-//   uint8_t p = finger.getImage();
-//   switch (p) {
-//     case FINGERPRINT_OK: Serial.println("Image taken"); break;
-//     case FINGERPRINT_NOFINGER: Serial.println("No finger detected"); return p;
-//     case FINGERPRINT_PACKETRECIEVEERR: Serial.println("Communication error"); return p;
-//     case FINGERPRINT_IMAGEFAIL: Serial.println("Imaging error"); return p;
-//     default: Serial.println("Unknown error"); return p;
-//   }
+bool waitRemoveFinger(){
+  return (finger.getImage() == FINGERPRINT_NOFINGER)? true : false;
+}
 
-//   // OK success!
+int setFingerprint(){
+  int p = finger.createModel();
+  if (p == FINGERPRINT_OK) {
+    p = finger.storeModel(id.finger);
+  } 
 
-//   p = finger.image2Tz();
-//   switch (p) {
-//     case FINGERPRINT_OK: Serial.println("Image converted"); break;
-//     case FINGERPRINT_IMAGEMESS: Serial.println("Image too messy"); return p;
-//     case FINGERPRINT_PACKETRECIEVEERR: Serial.println("Communication error"); return p;
-//     case FINGERPRINT_FEATUREFAIL: Serial.println("Could not find fingerprint features"); return p;
-//     case FINGERPRINT_INVALIDIMAGE: Serial.println("Could not find fingerprint features"); return p;
-//     default: Serial.println("Unknown error"); return p;
-//   }
+  return p;
+}
 
-//   // OK converted!
-//   p = finger.fingerSearch();
-//   if (p == FINGERPRINT_OK) { Serial.println("Found a print match!"); } 
-//   else if (p == FINGERPRINT_PACKETRECIEVEERR) {
-//     Serial.println("Communication error");
-//     return p;
-//   } 
-//   else if (p == FINGERPRINT_NOTFOUND) {
-//     Serial.println("Did not find a match");
-//     return p;
-//   } 
-//   else {
-//     Serial.println("Unknown error");
-//     return p;
-//   }
+int getFingerprint(unsigned char slot){
+  int p = finger.getImage();
 
-//   // found a match!
-//   Serial.print("Found ID #"); Serial.print(finger.fingerID);
-//   Serial.print(" with confidence of "); Serial.println(finger.confidence);
-
-//   return finger.fingerID;
-// }
+  if(p == FINGERPRINT_OK){
+    p = finger.image2Tz(slot);
+  }
+  
+  return p;
+}
 
 // returns -1 if failed, otherwise returns ID #
 int getFingerprintIDez() {
@@ -347,10 +325,24 @@ void Task1code( void * pvParameters ){
       flag.pressed = true;
     }
     else {
-      if(flag.pressed){
-        if((millis() - timeout.button) > 50){
-          timeout.button = millis();
-          Serial.println("button");
+      if(flag.pressed && !flag.sending){
+        if((millis() - timeout.button) > 3000){
+          flag.enroll = ~flag.enroll;
+          if(flag.enroll){
+            enroll_process = ENROLL_RESET;
+            id.finger = 1;
+            timeout.enroll = millis();
+          }
+        }
+        else if((millis() - timeout.button) > 50){
+          if(flag.enroll){
+            if(enroll_process == ENROLL_RESET){
+              id.finger++;
+            }
+          }
+          else{
+
+          }
         }
       }
       flag.pressed = false;
@@ -384,94 +376,135 @@ void Task1code( void * pvParameters ){
         lv_label_set_text_fmt(objects.lb_time, "%02d:%02d:%02d", id.dt.time.hour, id.dt.time.minute, id.dt.time.second);
         lv_label_set_text_fmt(objects.lb_date, "%02d-%02d-20%02d", id.dt.date.date, id.dt.date.month, id.dt.date.year);
 
-        if(flag.wifi) lv_label_set_text_fmt(objects.lb_connection, "%s", WiFi.localIP().toString());
-        else lv_label_set_text_fmt(objects.lb_connection, "%s", ssid);
-
-        if(flag.success){
-          lv_label_set_text(objects.lb_mark, "Berhasil");
-          lv_label_set_text(objects.lb_name, id.name);
-          lv_label_set_text(objects.lb_report_time, id.dts);
-          lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
-          lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
-
-          if(!flag.card && !flag.store){
-            flag.store = true;
-            deleteFile(SD, id.dts);
+        if(flag.enroll){
+          if((millis() - timeout.enroll) > 300000){
+            flag.enroll = false;
           }
 
-          flag.card = true;
-        }
-        else if(flag.fail){
-          lv_label_set_text(objects.lb_mark, "Simpan");
-          lv_label_set_text(objects.lb_name, "Memori");
-          lv_label_set_text(objects.lb_report_time, id.dts);
-          lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
-          lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+          lv_label_set_text(objects.lb_connection, "enroll");
+          lv_label_set_text_fmt(objects.lb_state, "Finger ID : %d", id.finger);
 
-          if(!flag.store){
-            flag.store = true;
-            writeFile(SD, id.dts, id.uuid);
+          if(enroll_process == ENROLL_FINISH){
+            lv_label_set_text(objects.lb_mark, "Berhasil Tersimpan");
           }
-
-          flag.card = true;
-        }
-        else if(flag.sending){
-          lv_label_set_text(objects.lb_mark, "Mengirim !!!");
-          lv_obj_remove_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
-          lv_obj_remove_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
-          lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
-        }
-
-        if(flag.wifi && !flag.card && ! flag.sending && (millis() - timeout.sdcard) > 60000){
-          File root = SD.open("/absensi");
-          if(!root) Serial.println("Failed to open directory");
-          else if(!root.isDirectory()) Serial.println("Not a directory");
-          else {
-            File file = root.openNextFile();
-            while(file){
-              if(file.isDirectory()){
-                Serial.print("  DIR : ");
-                Serial.println(file.name());
-              } else {
-                Serial.print("  FILE: ");
-                Serial.print(file.name());
-                Serial.print("  SIZE: ");
-                Serial.println(file.size());
-
-                memset(id.dts, 0, sizeof(id.dts));
-                memset(id.uuid, 0, sizeof(id.uuid));
-
-                memcpy(id.dts, file.name(), 19);
-                id.dts[13] = ':';
-                id.dts[16] = ':';
-
-                int size = file.size();
-                int i=0;
-                while(file.available()){
-                  if(i<size){
-                    id.uuid[i] = file.read();
-                    i++;
-                  }
-                }
-
-                Serial.println(id.uuid);
-
-                flag.sending = true;
-                flag.store = false;
-
-                break;
-              }
-              file = root.openNextFile();
-
-              yield();
+          else if(enroll_process == ENROLL_STORE){
+            lv_label_set_text(objects.lb_mark, "Menyimpan...");
+            if(setFingerprint() == FINGERPRINT_OK){
+              enroll_process = ENROLL_FINISH;
+              timeout.enroll = millis() - 297000;
             }
-            file.close();
           }
-          root.close();
-
-          timeout.sdcard = millis();
+          else if(enroll_process == ENROLL_FINGER2){
+            lv_label_set_text(objects.lb_mark, "Tempel Jari yang sama");
+            if(getFingerprint(2) == FINGERPRINT_OK){
+              enroll_process = ENROLL_FINISH;
+            }
+          }
+          else if(enroll_process == ENROLL_FINGER1){
+            lv_label_set_text(objects.lb_mark, "Angkat Jari Anda !!!");
+            if(waitRemoveFinger()){
+              enroll_process = ENROLL_FINGER2;
+            }
+          }
+          else{
+            lv_label_set_text(objects.lb_mark, "Pilih Finger ID, lalu tempel Jari");
+            if(getFingerprint(1) == FINGERPRINT_OK){
+              enroll_process = ENROLL_FINGER1;
+            }
+          }
         }
-        else if(!flag.wifi) timeout.sdcard = millis();
+        else{
+          lv_label_set_text(objects.lb_state, "MASUK");
+
+          if(flag.wifi) lv_label_set_text_fmt(objects.lb_connection, "%s", WiFi.localIP().toString());
+          else lv_label_set_text_fmt(objects.lb_connection, "%s", ssid);
+
+          if(flag.success){
+            lv_label_set_text(objects.lb_mark, "Berhasil");
+            lv_label_set_text(objects.lb_name, id.name);
+            lv_label_set_text(objects.lb_report_time, id.dts);
+            lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+
+            if(!flag.card && !flag.store){
+              flag.store = true;
+              deleteFile(SD, id.dts);
+            }
+
+            flag.card = true;
+          }
+          else if(flag.fail){
+            lv_label_set_text(objects.lb_mark, "Simpan");
+            lv_label_set_text(objects.lb_name, "Memori");
+            lv_label_set_text(objects.lb_report_time, id.dts);
+            lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+
+            if(!flag.store){
+              flag.store = true;
+              writeFile(SD, id.dts, id.uuid);
+            }
+
+            flag.card = true;
+          }
+          else if(flag.sending){
+            lv_label_set_text(objects.lb_mark, "Mengirim !!!");
+            lv_obj_remove_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+          }
+
+          if(flag.wifi && !flag.card && ! flag.sending && (millis() - timeout.sdcard) > 60000){
+            File root = SD.open("/absensi");
+            if(!root) Serial.println("Failed to open directory");
+            else if(!root.isDirectory()) Serial.println("Not a directory");
+            else {
+              File file = root.openNextFile();
+              while(file){
+                if(file.isDirectory()){
+                  Serial.print("  DIR : ");
+                  Serial.println(file.name());
+                } else {
+                  Serial.print("  FILE: ");
+                  Serial.print(file.name());
+                  Serial.print("  SIZE: ");
+                  Serial.println(file.size());
+
+                  memset(id.dts, 0, sizeof(id.dts));
+                  memset(id.uuid, 0, sizeof(id.uuid));
+
+                  memcpy(id.dts, file.name(), 19);
+                  id.dts[13] = ':';
+                  id.dts[16] = ':';
+
+                  int size = file.size();
+                  int i=0;
+                  while(file.available()){
+                    if(i<size){
+                      id.uuid[i] = file.read();
+                      i++;
+                    }
+                  }
+
+                  Serial.println(id.uuid);
+
+                  flag.sending = true;
+                  flag.store = false;
+
+                  break;
+                }
+                file = root.openNextFile();
+
+                yield();
+              }
+              file.close();
+            }
+            root.close();
+
+            timeout.sdcard = millis();
+          }
+          else if(!flag.wifi) timeout.sdcard = millis();
+        }
 
         xSemaphoreGive(p_mutex);
       }
@@ -481,7 +514,7 @@ void Task1code( void * pvParameters ){
 
     if((millis() - timeout.scan) > 250){
       if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
-        if(!flag.sending){
+        if(!flag.sending && !flag.enroll){
           if(!flag.card){
             byte card_uuid[5];
             unsigned char card_length = rf.loop(card_uuid);
@@ -490,8 +523,6 @@ void Task1code( void * pvParameters ){
               sprintf(id.dts, "20%02d-%02d-%02d %02d:%02d:%02d", id.dt.date.year, id.dt.date.month, id.dt.date.date, id.dt.time.hour, id.dt.time.minute, id.dt.time.second);
               timeout.rfid = millis();
               flag.card = true;
-              // flag.sending = true;
-              // flag.store = false;
               timeout.card = millis();
               lv_label_set_text_fmt(objects.lb_scan, "%s", id.uuid);
               lv_label_set_text(objects.lb_mark, "Silahkan Tempel Sidik Jari !!!");
@@ -544,31 +575,6 @@ void Task2code( void * pvParameters ){
         // // Gunakan server NTP terdekat (Indonesia)
         configTime(7 * 3600, 0, "0.id.pool.ntp.org", "1.id.pool.ntp.org");
 
-        // // Konfigurasi Firebase
-        // config.api_key = API_KEY;
-        // config.database_url = DATABASE_URL;
-
-        // /* Assign the user sign in credentials */
-        // auth.user.email = USER_EMAIL;
-        // auth.user.password = USER_PASSWORD;
-
-        // // Since v4.4.x, BearSSL engine was used, the SSL buffer need to be set.
-        // // Large data transmission may require larger RX buffer, otherwise connection issue or data read time out can be occurred.
-        // fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
-
-        // // Limit the size of response payload to be collected in FirebaseData
-        // fbdo.setResponseSize(2048);
-
-        // // // Login sebagai anonim (karena rules kita set true)
-        // Firebase.reconnectWiFi(true);
-        // fbdo.keepAlive(true, 5, 20);
-        // Firebase.begin(&config, &auth);
-
-        // Firebase.setDoubleDigits(5);
-
-        // config.timeout.serverResponse = 10 * 1000;
-        // config.signer.test_mode = true; // Mode testing terkadang bypass beberapa check
-
         flag.wifi = true;
       }
       else{
@@ -588,16 +594,6 @@ void Task2code( void * pvParameters ){
           }
           xSemaphoreGive(p_mutex);
         }
-        // if (Firebase.ready() && (millis() - timeout.send) > 10000) {
-        //   timeout.send = millis();
-        //   Serial.println("Kirim");
-        //   // Menggunakan setFloat untuk angka desimal
-        //   if (Firebase.RTDB.setFloat(&fbdo, "/sensor/suhu", 13.0)) {
-        //     Serial.println("Data terkirim ke: " + fbdo.dataPath());
-        //   } else {
-        //     Serial.println("Gagal: " + fbdo.errorReason());
-        //   }
-        // }
 
         if(ready){
           WiFiClientSecure client;
