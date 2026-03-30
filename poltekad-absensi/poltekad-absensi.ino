@@ -29,8 +29,11 @@ NTPClient timeClient(ntpUDP, "id.pool.ntp.org", utcOffsetInSeconds);
 // const char* ssid     = "OFFICE RND";
 // const char* password = "seipandaan";
 
-const char* ssid     = "Valerie2";
-const char* password = "ve12345678";
+// const char* ssid     = "Valerie2";
+// const char* password = "ve1234567";
+
+const char* ssid     = "samikro.id";
+const char* password = "samikroid23";
 
 #include "rtc-ds3231.h"
 RtcDs3231 rtc;
@@ -47,20 +50,25 @@ Rfid rf;
 #define SPI_SCK       18
 File dir;
 
+#include <Adafruit_Fingerprint.h>
+Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial2);
+
 /*Set to your screen resolution and rotation*/
 #define TFT_HOR_RES   320
 #define TFT_VER_RES   480
 #define TFT_ROTATION  LV_DISPLAY_ROTATION_270
-
-/*LVGL draw into this buffer, 1/10 screen size usually works well. The size is in bytes*/
-// #define DRAW_BUF_SIZE (TFT_HOR_RES * TFT_VER_RES / 10 * (LV_COLOR_DEPTH / 8))
-// uint32_t draw_buf[DRAW_BUF_SIZE / 4];
 
 #define DRAW_BUF_SIZE (480 * 2)
 uint32_t draw_buf[DRAW_BUF_SIZE];
 
 TFT_eSPI tft = TFT_eSPI();
 SemaphoreHandle_t p_mutex;
+
+#define BUTTON_PIN  25
+#define BUTTON_IS_PRESSED()   (digitalRead(BUTTON_PIN) == LOW)
+
+#define DOOR_PIN  32
+#define DOOR_IS_PRESSED()   (digitalRead(DOOR_PIN) == LOW)
 
 /* LVGL calls it when a rendered image needs to copied to the display*/
 void my_disp_flush( lv_display_t *disp, const lv_area_t *area, uint8_t * px_map){
@@ -90,6 +98,9 @@ typedef struct{
   unsigned long card;
   unsigned long rfid;
   unsigned long scan;
+  unsigned long sensor;
+  unsigned long info;
+  unsigned long button;
 }TIMEOUT_TypeDef;
 TIMEOUT_TypeDef timeout;
 
@@ -101,14 +112,17 @@ typedef struct{
   bool success;
   bool fail;
   bool store;
+  bool finger;
+  bool sensor;
+  bool pressed;
 }FLAG_TypeDef;
 FLAG_TypeDef flag;
 
 typedef struct{
-  unsigned char finger;
   char uuid[10];
   char name[50];
   char dts[20];
+  int finger;
   DATETIME_TypeDef dt;
 }ID_TypeDef;
 ID_TypeDef id;
@@ -119,34 +133,137 @@ TaskHandle_t Task1;
 TaskHandle_t Task2;
 
 void writeFile(fs::FS &fs, const char * path, const char * message){
-    Serial.printf("Writing file: %s\n", path);
+  char directory[40];
+  sprintf(directory, "/absensi/%s.txt", path);
+  directory[22] = '_';
+  directory[25] = '_';
 
-    File file = fs.open(path, FILE_WRITE);
-    if(!file){
-        Serial.println("Failed to open file for writing");
-        return;
-    }
-    if(file.print(message)){
-        Serial.println("File written");
-    } else {
-        Serial.println("Write failed");
-    }
-    file.close();
+  Serial.printf("Writing file: %s\n", directory);
+
+  File file = fs.open(directory, FILE_WRITE);
+  if(!file){
+      Serial.println("Failed to open file for writing");
+      return;
+  }
+  
+  if(file.print(message)) Serial.println("File written");
+  else Serial.println("Write failed");
+  
+  file.close();
 }
 
 void deleteFile(fs::FS &fs, const char * path){
-    Serial.printf("Deleting file: %s\n", path);
-    if(fs.remove(path)){
-        Serial.println("File deleted");
-    } else {
-        Serial.println("Delete failed");
-    }
+  char directory[40];
+  sprintf(directory, "/absensi/%s.txt", path);
+  directory[22] = '_';
+  directory[25] = '_';
+
+  Serial.printf("Deleting file: %s\n", directory);
+
+  if(fs.remove(directory)) Serial.println("File deleted");
+  else Serial.println("Delete failed");
+}
+
+// uint8_t getFingerprintID() {
+//   uint8_t p = finger.getImage();
+//   switch (p) {
+//     case FINGERPRINT_OK: Serial.println("Image taken"); break;
+//     case FINGERPRINT_NOFINGER: Serial.println("No finger detected"); return p;
+//     case FINGERPRINT_PACKETRECIEVEERR: Serial.println("Communication error"); return p;
+//     case FINGERPRINT_IMAGEFAIL: Serial.println("Imaging error"); return p;
+//     default: Serial.println("Unknown error"); return p;
+//   }
+
+//   // OK success!
+
+//   p = finger.image2Tz();
+//   switch (p) {
+//     case FINGERPRINT_OK: Serial.println("Image converted"); break;
+//     case FINGERPRINT_IMAGEMESS: Serial.println("Image too messy"); return p;
+//     case FINGERPRINT_PACKETRECIEVEERR: Serial.println("Communication error"); return p;
+//     case FINGERPRINT_FEATUREFAIL: Serial.println("Could not find fingerprint features"); return p;
+//     case FINGERPRINT_INVALIDIMAGE: Serial.println("Could not find fingerprint features"); return p;
+//     default: Serial.println("Unknown error"); return p;
+//   }
+
+//   // OK converted!
+//   p = finger.fingerSearch();
+//   if (p == FINGERPRINT_OK) { Serial.println("Found a print match!"); } 
+//   else if (p == FINGERPRINT_PACKETRECIEVEERR) {
+//     Serial.println("Communication error");
+//     return p;
+//   } 
+//   else if (p == FINGERPRINT_NOTFOUND) {
+//     Serial.println("Did not find a match");
+//     return p;
+//   } 
+//   else {
+//     Serial.println("Unknown error");
+//     return p;
+//   }
+
+//   // found a match!
+//   Serial.print("Found ID #"); Serial.print(finger.fingerID);
+//   Serial.print(" with confidence of "); Serial.println(finger.confidence);
+
+//   return finger.fingerID;
+// }
+
+// returns -1 if failed, otherwise returns ID #
+int getFingerprintIDez() {
+  uint8_t p = finger.getImage();
+  if (p != FINGERPRINT_OK) return -1;
+
+  p = finger.image2Tz();
+  if (p != FINGERPRINT_OK) return -1;
+
+  p = finger.fingerFastSearch();
+  if (p != FINGERPRINT_OK) return -1;
+
+  // found a match!
+  Serial.print("Found ID #"); Serial.print(finger.fingerID);
+  Serial.print(" with confidence of "); Serial.println(finger.confidence);
+  return finger.fingerID;
+}
+
+void fingerInit(){
+  // set the data rate for the sensor serial port
+  finger.begin(57600);
+  delay(5);
+  if (finger.verifyPassword()) flag.sensor = true;
+  else flag.sensor = false;
+
+  Serial.println(F("Reading sensor parameters"));
+
+  finger.getParameters();
+  Serial.print(F("Status: 0x")); Serial.println(finger.status_reg, HEX);
+  Serial.print(F("Sys ID: 0x")); Serial.println(finger.system_id, HEX);
+  Serial.print(F("Capacity: ")); Serial.println(finger.capacity);
+  Serial.print(F("Security level: ")); Serial.println(finger.security_level);
+  Serial.print(F("Device address: ")); Serial.println(finger.device_addr, HEX);
+  Serial.print(F("Packet len: ")); Serial.println(finger.packet_len);
+  Serial.print(F("Baud rate: ")); Serial.println(finger.baud_rate);
+
+  // finger.getTemplateCount();
+
+  // if (finger.templateCount == 0) {
+  //   Serial.print("Sensor doesn't contain any fingerprint data. Please run the "
+  //                "'enroll' example.");
+  // } else {
+  //   Serial.println("Waiting for valid finger...");
+  //   Serial.print("Sensor contains ");
+  //   Serial.print(finger.templateCount);
+  //   Serial.println(" templates");
+  // }
 }
 
 void setup()
 {
   delay(3000);
   Serial.begin( 115200 );
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(DOOR_PIN, INPUT_PULLUP);
+
   String LVGL_Arduino = "Hello World! ";
   LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() + "." + lv_version_patch();
   Serial.println( LVGL_Arduino );
@@ -183,6 +300,8 @@ void setup()
   if(!flag.sdcard) {
     Serial.println("Error accessing microSD card!");
   }
+
+  fingerInit();
 
   timeout.timer = millis();
   timeout.sdcard = millis();
@@ -224,8 +343,43 @@ void Task1code( void * pvParameters ){
     lv_timer_handler(); /* let the GUI do its work */
     ui_tick(); // Penting untuk EEZ Flow
 
+    if(BUTTON_IS_PRESSED()){
+      flag.pressed = true;
+    }
+    else {
+      if(flag.pressed){
+        if((millis() - timeout.button) > 50){
+          timeout.button = millis();
+          Serial.println("button");
+        }
+      }
+      flag.pressed = false;
+      timeout.button = millis();
+    }
+
+    if(!flag.sensor && (millis() - timeout.sensor) > 5000){
+      timeout.sensor = millis();
+      fingerInit();
+    }
+
     if((millis() - timeout.timer) > 1000){
       if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
+        unsigned long delta = millis() - timeout.info;
+        if(delta > 9000){
+          timeout.info = millis();
+        }
+        else if(delta > 6000){
+          if(flag.sdcard) lv_label_set_text(objects.lb_total_offline, "SD Card OK");
+          else lv_label_set_text(objects.lb_total_offline, "SD Card Fail");
+        }
+        else if(delta > 3000){
+          if(flag.sensor) lv_label_set_text(objects.lb_total_offline, "Finger Sensor OK");
+          else lv_label_set_text(objects.lb_total_offline, "Finger Sensor Fail");
+        }
+        else {
+          lv_label_set_text_fmt(objects.lb_total_offline, "total offline");
+        }
+
         id.dt = rtc.getTime();
         lv_label_set_text_fmt(objects.lb_time, "%02d:%02d:%02d", id.dt.time.hour, id.dt.time.minute, id.dt.time.second);
         lv_label_set_text_fmt(objects.lb_date, "%02d-%02d-20%02d", id.dt.date.date, id.dt.date.month, id.dt.date.year);
@@ -239,6 +393,13 @@ void Task1code( void * pvParameters ){
           lv_label_set_text(objects.lb_report_time, id.dts);
           lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+
+          if(!flag.card && !flag.store){
+            flag.store = true;
+            deleteFile(SD, id.dts);
+          }
+
+          flag.card = true;
         }
         else if(flag.fail){
           lv_label_set_text(objects.lb_mark, "Simpan");
@@ -249,10 +410,10 @@ void Task1code( void * pvParameters ){
 
           if(!flag.store){
             flag.store = true;
-            char directory[20];
-            sprintf(directory, "/%s", id.dts);
-            writeFile(SD, directory, id.uuid);
+            writeFile(SD, id.dts, id.uuid);
           }
+
+          flag.card = true;
         }
         else if(flag.sending){
           lv_label_set_text(objects.lb_mark, "Mengirim !!!");
@@ -261,46 +422,63 @@ void Task1code( void * pvParameters ){
           lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
         }
 
+        if(flag.wifi && !flag.card && ! flag.sending && (millis() - timeout.sdcard) > 60000){
+          File root = SD.open("/absensi");
+          if(!root) Serial.println("Failed to open directory");
+          else if(!root.isDirectory()) Serial.println("Not a directory");
+          else {
+            File file = root.openNextFile();
+            while(file){
+              if(file.isDirectory()){
+                Serial.print("  DIR : ");
+                Serial.println(file.name());
+              } else {
+                Serial.print("  FILE: ");
+                Serial.print(file.name());
+                Serial.print("  SIZE: ");
+                Serial.println(file.size());
+
+                memset(id.dts, 0, sizeof(id.dts));
+                memset(id.uuid, 0, sizeof(id.uuid));
+
+                memcpy(id.dts, file.name(), 19);
+                id.dts[13] = ':';
+                id.dts[16] = ':';
+
+                int size = file.size();
+                int i=0;
+                while(file.available()){
+                  if(i<size){
+                    id.uuid[i] = file.read();
+                    i++;
+                  }
+                }
+
+                Serial.println(id.uuid);
+
+                flag.sending = true;
+                flag.store = false;
+
+                break;
+              }
+              file = root.openNextFile();
+
+              yield();
+            }
+            file.close();
+          }
+          root.close();
+
+          timeout.sdcard = millis();
+        }
+        else if(!flag.wifi) timeout.sdcard = millis();
+
         xSemaphoreGive(p_mutex);
       }
 
       timeout.timer = millis();
     }
 
-    if((millis() - timeout.sdcard) > 10000){
-      File root = SD.open("/");
-      if(!root){
-        Serial.println("Failed to open directory");
-        // flag.sdcard = false;
-        // return;
-      }
-      else if(!root.isDirectory()){
-        Serial.println("Not a directory");
-        // return;
-      }
-      else {
-        File file = root.openNextFile();
-        while(file){
-            if(file.isDirectory()){
-                Serial.print("  DIR : ");
-                Serial.println(file.name());
-            } else {
-                Serial.print("  FILE: ");
-                Serial.print(file.name());
-                Serial.print("  SIZE: ");
-                Serial.println(file.size());
-            }
-            file = root.openNextFile();
-
-            yield();
-            // break;
-        }
-        file.close();
-      }
-      root.close();
-
-      timeout.sdcard = millis();
-    }
     if((millis() - timeout.scan) > 250){
       if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
         if(!flag.sending){
@@ -312,8 +490,8 @@ void Task1code( void * pvParameters ){
               sprintf(id.dts, "20%02d-%02d-%02d %02d:%02d:%02d", id.dt.date.year, id.dt.date.month, id.dt.date.date, id.dt.time.hour, id.dt.time.minute, id.dt.time.second);
               timeout.rfid = millis();
               flag.card = true;
-              flag.sending = true;
-              flag.store = false;
+              // flag.sending = true;
+              // flag.store = false;
               timeout.card = millis();
               lv_label_set_text_fmt(objects.lb_scan, "%s", id.uuid);
               lv_label_set_text(objects.lb_mark, "Silahkan Tempel Sidik Jari !!!");
@@ -323,11 +501,21 @@ void Task1code( void * pvParameters ){
             flag.card = false;
             flag.success = false;
             flag.fail = false;
+            flag.finger = false;
             lv_label_set_text_fmt(objects.lb_scan, "kosong");
             lv_label_set_text(objects.lb_mark, "Tempel Kartu Di Bawah Ini !!!");
             lv_obj_add_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
+          }
+          else if(!flag.finger){
+            id.finger = getFingerprintIDez();
+            if(id.finger > 0){
+              lv_label_set_text_fmt(objects.lb_scan, "%s-%d", id.uuid, id.finger);
+              flag.finger = true;
+              flag.sending = true;
+              flag.store = false;
+            }
           }
         }
         else if((millis() - timeout.rfid) > 60000){
@@ -391,6 +579,7 @@ void Task2code( void * pvParameters ){
           if(flag.sending){
             FirebaseJson payload;
             payload.add("uuid", id.uuid);
+            payload.add("finger", id.finger);
             payload.add("dateAt", id.dts);
             payload.add("state", "masuk");
 
@@ -421,7 +610,6 @@ void Task2code( void * pvParameters ){
           if(http.begin(client, "https://us-central1-absensi-poltekad.cloudfunctions.net/api")){
             Serial.println("start");
             http.addHeader("Content-Type", "application/json");
-            http.addHeader("Host", "https://us-central1-absensi-poltekad.cloudfunctions.net");
 
             int httpResponseCode = http.POST(jsonStr);
 
@@ -450,7 +638,8 @@ void Task2code( void * pvParameters ){
               }
 
               Serial.printf("Berhasil, kode: %d\n", httpResponseCode);
-            } else {
+            } 
+            else {
               if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
                 flag.sending = false;
                 flag.fail = true;
@@ -491,7 +680,12 @@ void Task2code( void * pvParameters ){
     else{
       if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
         flag.wifi = false;
-        flag.sending = false;
+
+        if(flag.sending){  
+          flag.sending = false;
+          flag.fail = true;
+        }
+        
         xSemaphoreGive(p_mutex);
       }
 
