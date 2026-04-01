@@ -56,9 +56,6 @@ SemaphoreHandle_t p_mutex;
 #define BUTTON_PIN  25
 #define BUTTON_IS_PRESSED()   (digitalRead(BUTTON_PIN) == LOW)
 
-#define DOOR_PIN  32
-#define DOOR_IS_PRESSED()   (digitalRead(DOOR_PIN) == LOW)
-
 /* LVGL calls it when a rendered image needs to copied to the display*/
 void my_disp_flush( lv_display_t *disp, const lv_area_t *area, uint8_t * px_map){
   uint32_t w = lv_area_get_width(area);
@@ -115,6 +112,7 @@ typedef struct{
   bool sensor;
   bool pressed;
   bool enroll;
+  bool coming;
 }FLAG_TypeDef;
 FLAG_TypeDef flag;
 
@@ -124,15 +122,14 @@ typedef struct{
   char dts[20];
   int finger;
   DATETIME_TypeDef dt;
+  bool coming;
 }ID_TypeDef;
 ID_TypeDef id;
-
-unsigned char modal = 0;
 
 TaskHandle_t Task1;
 TaskHandle_t Task2;
 
-void writeFile(fs::FS &fs, const char * path, const char * message){
+void writeFile(fs::FS &fs, const char * path, const char * uuid, unsigned char finger, bool coming){
   char directory[40];
   sprintf(directory, "/absensi/%s.txt", path);
   directory[22] = '_';
@@ -146,6 +143,8 @@ void writeFile(fs::FS &fs, const char * path, const char * message){
       return;
   }
   
+  char message[40];
+  sprintf(message, "%s-%d-%d", uuid, finger, coming);
   if(file.print(message)) Serial.println("File written");
   else Serial.println("Write failed");
   
@@ -240,7 +239,6 @@ void setup()
   delay(3000);
   Serial.begin( 115200 );
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  pinMode(DOOR_PIN, INPUT_PULLUP);
 
   String LVGL_Arduino = "Hello World! ";
   LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() + "." + lv_version_patch();
@@ -290,6 +288,7 @@ void setup()
   flag.sending = false;
   flag.success = false;
   flag.fail = false;
+  flag.coming = true;
 
   //create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
   xTaskCreatePinnedToCore(
@@ -327,8 +326,9 @@ void Task1code( void * pvParameters ){
     else {
       if(flag.pressed && !flag.sending){
         if((millis() - timeout.button) > 3000){
-          flag.enroll = ~flag.enroll;
-          if(flag.enroll){
+          if(flag.enroll) flag.enroll = false;
+          else{
+            flag.enroll = true;
             enroll_process = ENROLL_RESET;
             id.finger = 1;
             timeout.enroll = millis();
@@ -341,7 +341,8 @@ void Task1code( void * pvParameters ){
             }
           }
           else{
-
+            if(flag.coming) flag.coming = false;
+            else flag.coming = true;
           }
         }
       }
@@ -357,19 +358,16 @@ void Task1code( void * pvParameters ){
     if((millis() - timeout.timer) > 1000){
       if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
         unsigned long delta = millis() - timeout.info;
-        if(delta > 9000){
+        if(delta > 6000){
           timeout.info = millis();
         }
-        else if(delta > 6000){
+        else if(delta > 3000){
           if(flag.sdcard) lv_label_set_text(objects.lb_total_offline, "SD Card OK");
           else lv_label_set_text(objects.lb_total_offline, "SD Card Fail");
         }
-        else if(delta > 3000){
+        else {
           if(flag.sensor) lv_label_set_text(objects.lb_total_offline, "Finger Sensor OK");
           else lv_label_set_text(objects.lb_total_offline, "Finger Sensor Fail");
-        }
-        else {
-          lv_label_set_text_fmt(objects.lb_total_offline, "total offline");
         }
 
         id.dt = rtc.getTime();
@@ -397,7 +395,7 @@ void Task1code( void * pvParameters ){
           else if(enroll_process == ENROLL_FINGER2){
             lv_label_set_text(objects.lb_mark, "Tempel Jari yang sama");
             if(getFingerprint(2) == FINGERPRINT_OK){
-              enroll_process = ENROLL_FINISH;
+              enroll_process = ENROLL_STORE;
             }
           }
           else if(enroll_process == ENROLL_FINGER1){
@@ -414,7 +412,8 @@ void Task1code( void * pvParameters ){
           }
         }
         else{
-          lv_label_set_text(objects.lb_state, "MASUK");
+          if(flag.coming) lv_label_set_text(objects.lb_state, "MASUK");
+          else lv_label_set_text(objects.lb_state, "PULANG");
 
           if(flag.wifi) lv_label_set_text_fmt(objects.lb_connection, "%s", WiFi.localIP().toString());
           else lv_label_set_text_fmt(objects.lb_connection, "%s", ssid);
@@ -423,11 +422,13 @@ void Task1code( void * pvParameters ){
             lv_label_set_text(objects.lb_mark, "Berhasil");
             lv_label_set_text(objects.lb_name, id.name);
             lv_label_set_text(objects.lb_report_time, id.dts);
+            if(id.coming) lv_label_set_text(objects.lb_report_state, "MASUK");
+            else lv_label_set_text(objects.lb_report_state, "PULANG");
+
             lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
 
-            if(!flag.card && !flag.store){
-              flag.store = true;
+            if(!flag.card){
               deleteFile(SD, id.dts);
             }
 
@@ -437,12 +438,15 @@ void Task1code( void * pvParameters ){
             lv_label_set_text(objects.lb_mark, "Simpan");
             lv_label_set_text(objects.lb_name, "Memori");
             lv_label_set_text(objects.lb_report_time, id.dts);
+            if(id.coming) lv_label_set_text(objects.lb_report_state, "MASUK");
+            else lv_label_set_text(objects.lb_report_state, "PULANG");
+
             lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
 
             if(!flag.store){
               flag.store = true;
-              writeFile(SD, id.dts, id.uuid);
+              writeFile(SD, id.dts, id.uuid, id.finger, id.coming);
             }
 
             flag.card = true;
@@ -472,6 +476,7 @@ void Task1code( void * pvParameters ){
 
                   memset(id.dts, 0, sizeof(id.dts));
                   memset(id.uuid, 0, sizeof(id.uuid));
+                  id.finger = 0;
 
                   memcpy(id.dts, file.name(), 19);
                   id.dts[13] = ':';
@@ -479,17 +484,44 @@ void Task1code( void * pvParameters ){
 
                   int size = file.size();
                   int i=0;
+                  bool finger = false;
+                  unsigned char fingerPos = 0;
+                  char fingerId[5];
+                  memset(fingerId, 0, 5);
+
+                  bool state = false;
+
                   while(file.available()){
                     if(i<size){
-                      id.uuid[i] = file.read();
+                      char c = file.read();
+                      if(c == '-'){
+                        if(!finger) finger = true;
+                        else state = true;
+                      }
+                      else{
+                        if(state){
+                          if(c == '1') id.coming = true;
+                          else id.coming = false;
+                        }
+                        else if(finger){
+                          fingerId[fingerPos] = c;
+                          fingerPos++;
+                        }
+                        else{
+                          id.uuid[i] = c;
+                        }
+                      }
+                      
                       i++;
                     }
                   }
 
+                  id.finger = atoi(fingerId);
+                  Serial.println(id.finger);
                   Serial.println(id.uuid);
 
                   flag.sending = true;
-                  flag.store = false;
+                  flag.store = true;
 
                   break;
                 }
@@ -516,16 +548,18 @@ void Task1code( void * pvParameters ){
       if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
         if(!flag.sending && !flag.enroll){
           if(!flag.card){
+            lv_label_set_text_fmt(objects.lb_scan, "kosong");
+            lv_label_set_text(objects.lb_mark, "Tempel Kartu Di Bawah Ini !!!");
+
             byte card_uuid[5];
             unsigned char card_length = rf.loop(card_uuid);
             if(card_length){
               sprintf(id.uuid, "%02X%02X%02X%02X", card_uuid[0], card_uuid[1], card_uuid[2], card_uuid[3]);
               sprintf(id.dts, "20%02d-%02d-%02d %02d:%02d:%02d", id.dt.date.year, id.dt.date.month, id.dt.date.date, id.dt.time.hour, id.dt.time.minute, id.dt.time.second);
+              id.coming = flag.coming;
               timeout.rfid = millis();
               flag.card = true;
               timeout.card = millis();
-              lv_label_set_text_fmt(objects.lb_scan, "%s", id.uuid);
-              lv_label_set_text(objects.lb_mark, "Silahkan Tempel Sidik Jari !!!");
             }
           }
           else if((millis() - timeout.card) > 10000){
@@ -533,13 +567,15 @@ void Task1code( void * pvParameters ){
             flag.success = false;
             flag.fail = false;
             flag.finger = false;
-            lv_label_set_text_fmt(objects.lb_scan, "kosong");
-            lv_label_set_text(objects.lb_mark, "Tempel Kartu Di Bawah Ini !!!");
+            
             lv_obj_add_flag(objects.pl_modal, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
           }
           else if(!flag.finger){
+            lv_label_set_text_fmt(objects.lb_scan, "%s", id.uuid);
+            lv_label_set_text(objects.lb_mark, "Silahkan Tempel Sidik Jari !!!");
+
             id.finger = getFingerprintIDez();
             if(id.finger > 0){
               lv_label_set_text_fmt(objects.lb_scan, "%s-%d", id.uuid, id.finger);
@@ -587,7 +623,8 @@ void Task2code( void * pvParameters ){
             payload.add("uuid", id.uuid);
             payload.add("finger", id.finger);
             payload.add("dateAt", id.dts);
-            payload.add("state", "masuk");
+            if(id.coming) payload.add("state", "masuk");
+            else payload.add("state", "pulang");
 
             payload.toString(jsonStr, true);
             ready = true;
