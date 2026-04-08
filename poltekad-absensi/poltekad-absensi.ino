@@ -15,14 +15,11 @@ NTPClient timeClient(ntpUDP, "id.pool.ntp.org", utcOffsetInSeconds);
 #include <TFT_eSPI.h>     // version 2.5.43 by Bodmer
 #include "ui.h"
 
-// const char* ssid     = "OFFICE RND";
-// const char* password = "seipandaan";
+const char* ssid     = "Absensi Elkasista";
+const char* password = "Elkasista321";
 
-// const char* ssid     = "Valerie2";
-// const char* password = "ve1234567";
-
-const char* ssid     = "samikro.id";
-const char* password = "samikroid23";
+// const char* ssid     = "samikro.id";
+// const char* password = "samikroid23";
 
 #include "rtc-ds3231.h"
 RtcDs3231 rtc;
