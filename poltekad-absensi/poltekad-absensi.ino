@@ -1,6 +1,6 @@
-#include <WiFi.h>         // ESP32 version 2.0.17
+#include <WiFi.h>         // esp32 by Espressif Systems version 2.0.17
 #include <WiFiUDP.h>
-#include <NTPClient.h>
+#include <NTPClient.h>    // NTPClient by Fabrice Weinberg version 3.2.1
 const long utcOffsetInSeconds = 25200;
 // Define NTP Client to get time
 WiFiUDP ntpUDP;
@@ -9,17 +9,14 @@ NTPClient timeClient(ntpUDP, "id.pool.ntp.org", utcOffsetInSeconds);
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
-#include <Firebase_ESP_Client.h>
+#include <Firebase_ESP_Client.h>  // Firebase Arduino Client Library for ESP8266 and ESP32 by Mobizt version 4.4.17
 
-#include <lvgl.h>         // version 9.4.0 by kisvegabor
-#include <TFT_eSPI.h>     // version 2.5.43 by Bodmer
+#include <lvgl.h>         // lvgl by kisvegabor version 9.4.0
+#include <TFT_eSPI.h>     // TFT_eSPI by Bodmer version 2.5.43 
 #include "ui.h"
 
 const char* ssid     = "Absensi Elkasista";
 const char* password = "Elkasista321";
-
-// const char* ssid     = "samikro.id";
-// const char* password = "samikroid23";
 
 #include "rtc-ds3231.h"
 RtcDs3231 rtc;
@@ -36,7 +33,7 @@ Rfid rf;
 #define SPI_SCK       18
 File dir;
 
-#include <Adafruit_Fingerprint.h>
+#include <Adafruit_Fingerprint.h>   // Adafruit Fingerprint Sensor Library by Adafruit version 2.1.4
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial2);
 
 /*Set to your screen resolution and rotation*/
@@ -52,6 +49,10 @@ SemaphoreHandle_t p_mutex;
 
 #define BUTTON_PIN  25
 #define BUTTON_IS_PRESSED()   (digitalRead(BUTTON_PIN) == LOW)
+
+#define BUZZER_PIN  26
+#define BUZZER_ON()   digitalWrite(BUZZER_PIN, HIGH)
+#define BUZZER_OFF()  digitalWrite(BUZZER_PIN, LOW)
 
 /* LVGL calls it when a rendered image needs to copied to the display*/
 void my_disp_flush( lv_display_t *disp, const lv_area_t *area, uint8_t * px_map){
@@ -94,6 +95,8 @@ typedef struct{
   unsigned long info;
   unsigned long button;
   unsigned long enroll;
+  unsigned long manual;
+  unsigned long buzzer;
 }TIMEOUT_TypeDef;
 TIMEOUT_TypeDef timeout;
 
@@ -109,7 +112,7 @@ typedef struct{
   bool sensor;
   bool pressed;
   bool enroll;
-  bool coming;
+  bool manual;
 }FLAG_TypeDef;
 FLAG_TypeDef flag;
 
@@ -119,14 +122,18 @@ typedef struct{
   char dts[20];
   int finger;
   DATETIME_TypeDef dt;
-  bool coming;
+  unsigned char state;
+  unsigned long buzzer;
+  int today;
 }ID_TypeDef;
 ID_TypeDef id;
+
+unsigned char state;
 
 TaskHandle_t Task1;
 TaskHandle_t Task2;
 
-void writeFile(fs::FS &fs, const char * path, const char * uuid, unsigned char finger, bool coming){
+void writeFile(fs::FS &fs, const char * path, const char * uuid, unsigned char finger, unsigned char state){
   char directory[40];
   sprintf(directory, "/absensi/%s.txt", path);
   directory[22] = '_';
@@ -141,7 +148,7 @@ void writeFile(fs::FS &fs, const char * path, const char * uuid, unsigned char f
   }
   
   char message[40];
-  sprintf(message, "%s-%d-%d", uuid, finger, coming);
+  sprintf(message, "%s-%d-%d", uuid, finger, state);
   if(file.print(message)) Serial.println("File written");
   else Serial.println("Write failed");
   
@@ -217,25 +224,14 @@ void fingerInit(){
   Serial.print(F("Device address: ")); Serial.println(finger.device_addr, HEX);
   Serial.print(F("Packet len: ")); Serial.println(finger.packet_len);
   Serial.print(F("Baud rate: ")); Serial.println(finger.baud_rate);
-
-  // finger.getTemplateCount();
-
-  // if (finger.templateCount == 0) {
-  //   Serial.print("Sensor doesn't contain any fingerprint data. Please run the "
-  //                "'enroll' example.");
-  // } else {
-  //   Serial.println("Waiting for valid finger...");
-  //   Serial.print("Sensor contains ");
-  //   Serial.print(finger.templateCount);
-  //   Serial.println(" templates");
-  // }
 }
 
-void setup()
-{
+void setup(){
   delay(3000);
   Serial.begin( 115200 );
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(BUZZER_PIN, OUTPUT);
+  BUZZER_OFF();
 
   String LVGL_Arduino = "Hello World! ";
   LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() + "." + lv_version_patch();
@@ -285,7 +281,7 @@ void setup()
   flag.sending = false;
   flag.success = false;
   flag.fail = false;
-  flag.coming = true;
+  state = 0;
 
   //create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
   xTaskCreatePinnedToCore(
@@ -338,8 +334,11 @@ void Task1code( void * pvParameters ){
             }
           }
           else{
-            if(flag.coming) flag.coming = false;
-            else flag.coming = true;
+            state++;
+            if(state > 2) state = 0;
+
+            flag.manual = true;
+            timeout.manual = millis();
           }
         }
       }
@@ -351,6 +350,8 @@ void Task1code( void * pvParameters ){
       timeout.sensor = millis();
       fingerInit();
     }
+
+    if((millis() - timeout.buzzer) > id.buzzer) BUZZER_OFF();
 
     if((millis() - timeout.timer) > 1000){
       if(xSemaphoreTake(p_mutex, pdMS_TO_TICKS(100))){
@@ -409,8 +410,24 @@ void Task1code( void * pvParameters ){
           }
         }
         else{
-          if(flag.coming) lv_label_set_text(objects.lb_state, "MASUK");
-          else lv_label_set_text(objects.lb_state, "PULANG");
+          if(flag.manual){
+            if((millis() - timeout.manual) > 60000){
+              flag.manual = false;
+            }
+          }
+          else{
+            unsigned int rtc_minute = (id.dt.time.hour * 60) + id.dt.time.minute;
+            unsigned int out_minute = (16 * 60) + 0;
+            unsigned int late_minute = (7 * 60) + 0;
+
+            if(rtc_minute >= out_minute) state = 2;
+            else if(rtc_minute >= late_minute) state = 1;
+            else state = 0;
+          }
+
+          if(state == 2) lv_label_set_text(objects.lb_state, "PULANG");
+          else if(state == 1) lv_label_set_text(objects.lb_state, "TERLAMBAT");
+          else lv_label_set_text(objects.lb_state, "MASUK");
 
           if(flag.wifi) lv_label_set_text_fmt(objects.lb_connection, "%s", WiFi.localIP().toString());
           else lv_label_set_text_fmt(objects.lb_connection, "%s", ssid);
@@ -418,9 +435,13 @@ void Task1code( void * pvParameters ){
           if(flag.success){
             lv_label_set_text(objects.lb_mark, "Berhasil");
             lv_label_set_text(objects.lb_name, id.name);
-            lv_label_set_text(objects.lb_report_time, id.dts);
-            if(id.coming) lv_label_set_text(objects.lb_report_state, "MASUK");
-            else lv_label_set_text(objects.lb_report_state, "PULANG");
+
+            if(id.today > 0) lv_label_set_text(objects.lb_report_time, "Anda Sudah Absen");
+            else lv_label_set_text(objects.lb_report_time, id.dts);
+
+            if(id.state == 2) lv_label_set_text(objects.lb_report_state, "PULANG");
+            else if(id.state == 1) lv_label_set_text(objects.lb_report_state, "TERLAMBAT");
+            else lv_label_set_text(objects.lb_report_state, "MASUK");
 
             lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
@@ -435,15 +456,16 @@ void Task1code( void * pvParameters ){
             lv_label_set_text(objects.lb_mark, "Simpan");
             lv_label_set_text(objects.lb_name, "Memori");
             lv_label_set_text(objects.lb_report_time, id.dts);
-            if(id.coming) lv_label_set_text(objects.lb_report_state, "MASUK");
-            else lv_label_set_text(objects.lb_report_state, "PULANG");
+            if(id.state == 2) lv_label_set_text(objects.lb_report_state, "PULANG");
+            else if(id.state == 1) lv_label_set_text(objects.lb_report_state, "TERLAMBAT");
+            else lv_label_set_text(objects.lb_report_state, "MASUK");
 
             lv_obj_add_flag(objects.spn_load, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
 
             if(!flag.store){
               flag.store = true;
-              writeFile(SD, id.dts, id.uuid, id.finger, id.coming);
+              writeFile(SD, id.dts, id.uuid, id.finger, id.state);
             }
 
             flag.card = true;
@@ -455,7 +477,7 @@ void Task1code( void * pvParameters ){
             lv_obj_add_flag(objects.pl_success, LV_OBJ_FLAG_HIDDEN);
           }
 
-          if(flag.wifi && !flag.card && ! flag.sending && (millis() - timeout.sdcard) > 60000){
+          if(flag.wifi && !flag.card && ! flag.sending && (millis() - timeout.sdcard) > 15000){
             File root = SD.open("/absensi");
             if(!root) Serial.println("Failed to open directory");
             else if(!root.isDirectory()) Serial.println("Not a directory");
@@ -497,8 +519,9 @@ void Task1code( void * pvParameters ){
                       }
                       else{
                         if(state){
-                          if(c == '1') id.coming = true;
-                          else id.coming = false;
+                          if(c == '2') id.state = 2;
+                          else if(c == '1') id.state = 1;
+                          else id.state = 0;
                         }
                         else if(finger){
                           fingerId[fingerPos] = c;
@@ -516,6 +539,7 @@ void Task1code( void * pvParameters ){
                   id.finger = atoi(fingerId);
                   Serial.println(id.finger);
                   Serial.println(id.uuid);
+                  Serial.println(id.state);
 
                   flag.sending = true;
                   flag.store = true;
@@ -553,10 +577,16 @@ void Task1code( void * pvParameters ){
             if(card_length){
               sprintf(id.uuid, "%02X%02X%02X%02X", card_uuid[0], card_uuid[1], card_uuid[2], card_uuid[3]);
               sprintf(id.dts, "20%02d-%02d-%02d %02d:%02d:%02d", id.dt.date.year, id.dt.date.month, id.dt.date.date, id.dt.time.hour, id.dt.time.minute, id.dt.time.second);
-              id.coming = flag.coming;
+              id.state = state;
               timeout.rfid = millis();
               flag.card = true;
               timeout.card = millis();
+
+              BUZZER_ON();
+              id.buzzer = 100;
+              timeout.buzzer = millis();
+
+              Serial.printf("Kartu %s\r\n", id.uuid);
             }
           }
           else if((millis() - timeout.card) > 10000){
@@ -579,6 +609,12 @@ void Task1code( void * pvParameters ){
               flag.finger = true;
               flag.sending = true;
               flag.store = false;
+
+              BUZZER_ON();
+              id.buzzer = 100;
+              timeout.buzzer = millis();
+
+              Serial.printf("Sidik Jari %d\r\n", id.finger);
             }
           }
         }
@@ -609,6 +645,7 @@ void Task2code( void * pvParameters ){
         configTime(7 * 3600, 0, "0.id.pool.ntp.org", "1.id.pool.ntp.org");
 
         flag.wifi = true;
+        Serial.println("WiFi tersambung");
       }
       else{
         bool ready = false;
@@ -620,10 +657,14 @@ void Task2code( void * pvParameters ){
             payload.add("uuid", id.uuid);
             payload.add("finger", id.finger);
             payload.add("dateAt", id.dts);
-            if(id.coming) payload.add("state", "masuk");
-            else payload.add("state", "pulang");
+
+            if(id.state == 2) payload.add("state", "pulang");
+            else if(id.state == 1) payload.add("state", "terlambat");
+            else payload.add("state", "masuk");
 
             payload.toString(jsonStr, true);
+
+            Serial.println(jsonStr);
             ready = true;
           }
           xSemaphoreGive(p_mutex);
@@ -638,8 +679,9 @@ void Task2code( void * pvParameters ){
           http.setTimeout(20000);
           // URL wajib diawali https://
           if(http.begin(client, "https://us-central1-absensi-poltekad.cloudfunctions.net/api")){
-            Serial.println("start");
+            Serial.println("Start kirim");
             http.addHeader("Content-Type", "application/json");
+            id.today = 0;
 
             int httpResponseCode = http.POST(jsonStr);
 
@@ -659,6 +701,15 @@ void Task2code( void * pvParameters ){
                 if (result.success) {
                   memset(id.name, 0, sizeof(id.name));
                   sprintf(id.name, "%s", result.stringValue.c_str());
+                  
+                  if(strcmp(id.name, "Not Found") != 0){
+                    FirebaseJsonData jToday; // Objek penampung hasil ekstraksi
+                    json.get(jToday, "today");
+
+                    if (jToday.type == "int" /* jToday.typeNum == FirebaseJson::JSON_INT */){
+                      id.today = jToday.to<int>();
+                    }
+                  }
                 }
 
                 flag.sending = false;                
@@ -720,7 +771,7 @@ void Task2code( void * pvParameters ){
       }
 
       if((millis() - timeout.wifi) > 60000){
-        Serial.println("Connecting...");
+        Serial.printf("Menyambungkan ke %s\r\n", ssid);
         WiFi.disconnect();
         WiFi.mode(WIFI_STA);
 

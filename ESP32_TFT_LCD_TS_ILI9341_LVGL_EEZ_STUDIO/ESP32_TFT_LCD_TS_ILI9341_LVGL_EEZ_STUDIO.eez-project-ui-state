@@ -1086,9 +1086,7 @@
       "selectionBack": {
         "0": {
           "0": {},
-          "3": {
-            "$selected": true
-          },
+          "3": {},
           "4": {},
           "5": {},
           "6": {},
@@ -1159,5 +1157,5 @@
   "globalFlowZoom": true,
   "flowZoom": 1,
   "implementationLanguage": "C++",
-  "openDialogDefaultPath": "C:\\Users\\samik\\Downloads\\TFT 3.5 Inch (4).png"
+  "openDialogDefaultPath": "C:\\Users\\samik\\Downloads\\TFT 3.5 Inch (1).png"
 }

@@ -3,7 +3,7 @@
 
 #include <Arduino.h>
 #include <SPI.h> 
-#include <MFRC522.h>              	//use MFRC522 by GitHubCommunity Version 1.4.9
+#include <MFRC522.h>              	//MFRC522 by GitHubCommunity Version 1.4.12
 
 #define RST_PIN		14
 #define SS_PIN		13
